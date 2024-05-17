@@ -18,7 +18,8 @@ export class BlacklistFilter implements Filter {
 
       let blacklist = [
         "8N57pYk1SoHkBZcPMhyJMJCLLfEyHMq3SqYn63W9RoVG",
-        "GH8GPjSX9XNvxsVaJHg9KfEXVovqtiY5pyhu8vYrwjTb"
+        "GH8GPjSX9XNvxsVaJHg9KfEXVovqtiY5pyhu8vYrwjTb",
+        "BpHihYFRjTywHg6J2KmL8yWGsAQB9Ab2W3bGQyLBzbek"
       ];
 
       const metadataPDA = getPdaMetadataKey(poolKeys.baseMint);

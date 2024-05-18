@@ -68,6 +68,7 @@ export const USE_SNIPE_LIST = retrieveEnvVariable('USE_SNIPE_LIST', logger) === 
 export const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRESH_INTERVAL', logger));
 
 //Holders filters
+export const BLACKLIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('BLACKLIST_REFRESH_INTERVAL', logger));
 export const CHECK_TOKEN_DISTRIBUTION = retrieveEnvVariable('CHECK_TOKEN_DISTRIBUTION', logger)=== 'true';
 export const TOP_HOLDER_MAX_PERCENTAGE = Number(retrieveEnvVariable('TOP_HOLDER_MAX_PERCENTAGE', logger));
 export const CHECK_ABNORMAL_DISTRIBUTION  = retrieveEnvVariable('CHECK_ABNORMAL_DISTRIBUTION', logger) === 'true';
@@ -80,3 +81,10 @@ export const HOLDER_MIN_AMOUNT = Number (retrieveEnvVariable('HOLDER_MIN_AMOUNT'
 //Telegram config
 export const TELEGRAM_BOT_TOKEN = retrieveEnvVariable('TELEGRAM_BOT_TOKEN', logger);
 export const TELEGRAM_CHAT_ID = Number (retrieveEnvVariable('TELEGRAM_CHAT_ID', logger));
+
+//Technical analysis
+export const MACD_SHORT_PERIOD = Number (retrieveEnvVariable('MACD_SHORT_PERIOD', logger));
+export const MACD_LONG_PERIOD = Number (retrieveEnvVariable('MACD_LONG_PERIOD', logger));
+export const MACD_SIGNAL_PERIOD = Number (retrieveEnvVariable('MACD_SIGNAL_PERIOD', logger));
+
+export const RSI_PERIOD = Number (retrieveEnvVariable('RSI_PERIOD', logger));

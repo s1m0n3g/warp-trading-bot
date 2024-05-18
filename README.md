@@ -105,6 +105,15 @@ Note: When using snipe list filters below will be disabled.
   - Set `0` to disable.
 - `MAX_POOL_SIZE` - Bot will buy only if the pool size is less than or equal the specified amount.
   - Set `0` to disable.
+- `BLACKLIST_REFRESH_INTERVAL` - Interval in milliseconds to refresh the blacklist.
+
+
+#### Technical analysis
+- `MACD_SHORT_PERIOD` - default 12
+- `MACD_LONG_PERIOD` - default 26
+- `MACD_SIGNAL_PERIOD` - default 9
+
+- `RSI_PERIOD` - default 14
 
 ## Warp transactions (beta)
 

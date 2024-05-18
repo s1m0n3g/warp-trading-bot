@@ -20,13 +20,11 @@ import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
 import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
 import { Semaphore } from 'async-mutex';
-import BN from 'bn.js';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
-import { Context, Telegraf } from 'telegraf';
-import { InlineKeyboardMarkup, Message, Update } from 'telegraf/typings/core/types/typegram';
-import { SqueezeListCache } from './cache/squeeze-list.cache';
-import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token-metadata';
+import { BlacklistCache } from './cache/blacklist.cache';
+import { TradeSignals } from './tradeSignals';
+import { Messaging } from './messaging';
 
 export interface BotConfig {
   wallet: Keypair;
@@ -59,18 +57,25 @@ export interface BotConfig {
   checkTokenDistribution: boolean;
   checkAbnormalDistribution: boolean;
   telegramChatId: number;
+  telegramBotToken: string,
+  blacklistRefreshInterval: number,
+  MACDLongPeriod: number,
+  MACDShortPeriod: number,
+  MACDSignalPeriod: number,
+  RSIPeriod: number
 }
 
 export class Bot {
   // snipe list
   private readonly snipeListCache?: SnipeListCache;
+  private readonly blacklistCache?: BlacklistCache;
 
   private readonly semaphore: Semaphore;
   private sellExecutionCount = 0;
-  private readonly stopLoss = new Map<string, TokenAmount>();
   public readonly isWarp: boolean = false;
   public readonly isJito: boolean = false;
-  private readonly tg_bot: Telegraf<Context<Update>>;
+  private readonly tradeSignals: TradeSignals;
+  private readonly messaging: Messaging;
 
   constructor(
     private readonly connection: Connection,
@@ -78,16 +83,18 @@ export class Bot {
     private readonly poolStorage: PoolCache,
     private readonly txExecutor: TransactionExecutor,
     readonly config: BotConfig,
-    private readonly _tg_bot: Telegraf<Context<Update>>
   ) {
     this.isWarp = txExecutor instanceof WarpTransactionExecutor;
     this.isJito = txExecutor instanceof JitoTransactionExecutor;
-    this.semaphore = new Semaphore(config.maxTokensAtTheTime);
-    this.tg_bot = _tg_bot;
 
-    // this.tg_bot.on("message", async (ctx) => {
-      
-    // });
+    this.semaphore = new Semaphore(config.maxTokensAtTheTime);
+
+    this.messaging = new Messaging(config);
+
+    this.tradeSignals = new TradeSignals(connection, config, this.messaging);
+
+    this.blacklistCache = new BlacklistCache();
+    this.blacklistCache.init();
 
     if (this.config.useSnipeList) {
       this.snipeListCache = new SnipeListCache();
@@ -108,165 +115,6 @@ export class Bot {
     return true;
   }
 
-  private calculateMACDv2 = (data: number[]): { macd: number, signal: number } => {
-    const shortPeriod = 12;
-    const longPeriod = 26;
-    const signalPeriod = 9;
-  
-    if (data.length < longPeriod + signalPeriod - 1) {
-      return { macd: null, signal: null };
-    }
-  
-    // Calculate short and long EMAs
-    const shortMultiplier = 2 / (shortPeriod + 1);
-    const longMultiplier = 2 / (longPeriod + 1);
-  
-    let shortEMA = data.slice(0, shortPeriod).reduce((acc, val) => acc + val, 0) / shortPeriod;
-    let longEMA = data.slice(0, longPeriod).reduce((acc, val) => acc + val, 0) / longPeriod;
-  
-    const macdLine: number[] = [];
-    for (let i = longPeriod; i < data.length; i++) {
-      shortEMA = (data[i] - shortEMA) * shortMultiplier + shortEMA;
-      longEMA = (data[i] - longEMA) * longMultiplier + longEMA;
-  
-      const macdValue = shortEMA - longEMA;
-      macdLine.push(macdValue);
-    }
-  
-    // Initialize signal line with a simple average of the first MACD values
-    let sum = 0;
-    for (let i = 0; i < signalPeriod; i++) {
-      sum += macdLine[i];
-    }
-    let signalEMA = sum / signalPeriod;
-    const signal: number[] = [signalEMA]; // Initialize with the first signal value
-  
-    // Calculate signal line (9-period EMA of MACD)
-    const signalMultiplier = 2 / (signalPeriod + 1);
-    for (let i = signalPeriod; i < macdLine.length; i++) {
-      signalEMA = (macdLine[i] - signalEMA) * signalMultiplier + signalEMA;
-      signal.push(signalEMA);
-    }
-  
-    return {
-      macd: macdLine[macdLine.length - 1],
-      signal: signal[signal.length - 1]
-    };
-  }
-  
-
-private calculateRSIv2 = (prices: number[]): number => {
-  const period = 14;
-  const delta: number[] = [];
-  let gainSum = 0;
-  let lossSum = 0;
-
-  for (let i = 1; i < prices.length; i++) {
-      delta.push(prices[i] - prices[i - 1]);
-  }
-
-  for (let i = 0; i < period; i++) {
-      if (delta[i] > 0) {
-          gainSum += delta[i];
-      } else {
-          lossSum += Math.abs(delta[i]);
-      }
-  }
-
-  const initialAvgGain = gainSum / period;
-  const initialAvgLoss = lossSum / period;
-
-  let prevAvgGain = initialAvgGain;
-  let prevAvgLoss = initialAvgLoss;
-
-  let cRSI = 0;
-
-  for (let i = period; i < prices.length; i++) {
-      const gain = delta[i] > 0 ? delta[i] : 0;
-      const loss = delta[i] < 0 ? Math.abs(delta[i]) : 0;
-
-      const avgGain = ((prevAvgGain * (period - 1)) + gain) / period;
-      const avgLoss = ((prevAvgLoss * (period - 1)) + loss) / period;
-
-      const RS = avgGain / avgLoss;
-      cRSI = 100 - (100 / (1 + RS));
-
-      prevAvgGain = avgGain;
-      prevAvgLoss = avgLoss;
-  }
-
-  return cRSI;
-}
-
-  private async waitForBuySignal(poolKeys: LiquidityPoolKeysV4) {
-
-    logger.trace({ mint: poolKeys.baseMint.toString() }, `Waiting for buy signal`);
-
-    let timesToCheck = (10*60) / 2; //10min with 2s interval
-
-    let maxSignalWaitTries = 60;
-    let timesChecked = 0;
-
-    let prices: number[] = [];
-
-    // let previousRSI = null;
-    do {
-      try {
-        let poolInfo = await Liquidity.fetchInfo({
-          connection: this.connection,
-          poolKeys,
-        });
-
-        let quoteAmount = new TokenAmount(this.config.quoteToken, 1, false);
-        let tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
-        let slippagePercent = new Percent(0, 100);
-
-        let computedAmountOut = Liquidity.computeAmountOut({
-          poolKeys: poolKeys,
-          poolInfo: poolInfo,
-          amountIn: quoteAmount,
-          currencyOut: tokenOut,
-          slippage: slippagePercent,
-        });
-
-        let tokenPriceBN = quoteAmount.div(computedAmountOut.amountOut);
-
-        if (prices.length === 0 || parseFloat(tokenPriceBN.toFixed(16)) !== prices[prices.length - 1]) {
-          prices.push(parseFloat(tokenPriceBN.toFixed(16)));
-        }
-
-        let currentRSI = this.calculateRSIv2(prices);
-        let macd = this.calculateMACDv2(prices);
-        logger.trace({ mint: poolKeys.baseMint.toString() }, `RSI: ${currentRSI}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
-
-        if(timesChecked >= maxSignalWaitTries && currentRSI == 0 && !macd.macd){
-          logger.trace(`No signal for ${maxSignalWaitTries} tries, skipping buy signal`);
-          return false;
-        }
-
-        if(currentRSI > 0 && currentRSI < 30 && macd.macd && macd.signal && macd.macd > macd.signal) {
-          logger.trace("RSI is less than 30, macd + signal = long, sending buy signal");
-          return true;
-        }
-
-        // if (currentRSI > 0) {
-        //   if (previousRSI != null && previousRSI > 0 && previousRSI < 30 && currentRSI >= 30) {
-        //     previousRSI = currentRSI;
-        //     return true;
-        //   }
-        //   previousRSI = currentRSI;
-        // }
-
-        await sleep(1000);
-      } catch (e) {
-        logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
-      } finally {
-        timesChecked++;
-      }
-    } while (timesChecked < timesToCheck);
-
-    return false;
-  }
 
   public async buy(accountId: PublicKey, poolState: LiquidityStateV4, lag: number = 0) {
     logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
@@ -309,7 +157,7 @@ private calculateRSIv2 = (prices: number[]): number => {
         }
       }
 
-      let buySignal = await this.waitForBuySignal(poolKeys);
+      let buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
 
       if (!buySignal) {
         logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
@@ -352,7 +200,7 @@ private calculateRSIv2 = (prices: number[]): number => {
               `Confirmed buy tx`,
             );
 
-            this.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nSignature <code>${result.signature}</code>`, poolState.baseMint.toString())
+            await this.messaging.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nSignature <code>${result.signature}</code>`, poolState.baseMint.toString())
 
             break;
           }
@@ -408,7 +256,7 @@ private calculateRSIv2 = (prices: number[]): number => {
       for (let i = 0; i < this.config.maxSellRetries; i++) {
         try {
           if (i < 1) { // Only check for sell signal on first attempt, not on retries
-            const shouldSell = await this.waitForSellSignal(tokenAmountIn, poolKeys);
+            const shouldSell = await this.tradeSignals.waitForSellSignal(tokenAmountIn, poolKeys);
 
             if (!shouldSell) {
               return;
@@ -437,33 +285,32 @@ private calculateRSIv2 = (prices: number[]): number => {
 
             try {
               this.connection.getParsedTransaction(result.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 })
-              .then((parsedConfirmedTransaction) => {
+                .then(async (parsedConfirmedTransaction) => {
                   if (parsedConfirmedTransaction) {
-                      let preTokenBalances = parsedConfirmedTransaction.meta.preTokenBalances;
-                      let postTokenBalances = parsedConfirmedTransaction.meta.postTokenBalances;
-          
-                      // Filter for WSOL mint and your public key
-                      let pre = preTokenBalances
-                          .filter(x => x.mint === this.config.quoteToken.mint.toString() && x.owner === this.config.wallet.publicKey.toString())
-                          .map(x => x.uiTokenAmount.uiAmount)
-                          .reduce((a, b) => a + b, 0); // Sum the pre values
-          
-                      let post = postTokenBalances
-                          .filter(x => x.mint === this.config.quoteToken.mint.toString() && x.owner ===  this.config.wallet.publicKey.toString())
-                          .map(x => x.uiTokenAmount.uiAmount)
-                          .reduce((a, b) => a + b, 0); // Sum the post values
-          
-                      profitOrLoss = (post - pre) - parseFloat(this.config.quoteAmount.toFixed());
+                    let preTokenBalances = parsedConfirmedTransaction.meta.preTokenBalances;
+                    let postTokenBalances = parsedConfirmedTransaction.meta.postTokenBalances;
 
-                      this.sendTelegramMessage(`⭕Confirmed sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${profitOrLoss < 0 ? "🔴Loss👎 " : "🟢Profit👍 "}<code>${profitOrLoss.toFixed(5)}</code>\n\nRetries <code>${i + 1}/${this.config.maxSellRetries}</code>`, rawAccount.mint.toString());
-                      console.log('Profit or Loss:', profitOrLoss);
+                    // Filter for WSOL mint and your public key
+                    let pre = preTokenBalances
+                      .filter(x => x.mint === this.config.quoteToken.mint.toString() && x.owner === this.config.wallet.publicKey.toString())
+                      .map(x => x.uiTokenAmount.uiAmount)
+                      .reduce((a, b) => a + b, 0); // Sum the pre values
+
+                    let post = postTokenBalances
+                      .filter(x => x.mint === this.config.quoteToken.mint.toString() && x.owner === this.config.wallet.publicKey.toString())
+                      .map(x => x.uiTokenAmount.uiAmount)
+                      .reduce((a, b) => a + b, 0); // Sum the post values
+
+                    profitOrLoss = (post - pre) - parseFloat(this.config.quoteAmount.toFixed());
+
+                    await this.messaging.sendTelegramMessage(`⭕Confirmed sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${profitOrLoss < 0 ? "🔴Loss👎 " : "🟢Profit👍 "}<code>${profitOrLoss.toFixed(5)}</code>\n\nRetries <code>${i + 1}/${this.config.maxSellRetries}</code>`, rawAccount.mint.toString());
                   }
-              })
-              .catch((error) => {
+                })
+                .catch((error) => {
                   console.log('Error fetching transaction details:', error);
-              });
+                });
 
-             
+
             } catch (error) {
               console.log("Error calculating profit", error);
             }
@@ -579,7 +426,7 @@ private calculateRSIv2 = (prices: number[]): number => {
       quoteToken: this.config.quoteToken,
       minPoolSize: this.config.minPoolSize,
       maxPoolSize: this.config.maxPoolSize,
-    });
+    }, this.blacklistCache);
 
     const timesToCheck = this.config.filterCheckDuration / this.config.filterCheckInterval;
     let timesChecked = 0;
@@ -603,6 +450,9 @@ private calculateRSIv2 = (prices: number[]): number => {
           matchCount = 0;
         }
 
+        if (this.config.filterCheckInterval > 1) {
+          logger.trace(`${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 60000} min.`);
+        }
         await sleep(this.config.filterCheckInterval);
       } finally {
         timesChecked++;
@@ -610,157 +460,6 @@ private calculateRSIv2 = (prices: number[]): number => {
     } while (timesChecked < timesToCheck);
 
     return false;
-  }
-
-  private async waitForSellSignal(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4) {
-    if (this.config.priceCheckDuration === 0 || this.config.priceCheckInterval === 0) {
-      return true;
-    }
-
-    const timesToCheck = this.config.priceCheckDuration / this.config.priceCheckInterval;
-    const profitFraction = this.config.quoteAmount.mul(this.config.takeProfit).numerator.div(new BN(100));
-    const profitAmount = new TokenAmount(this.config.quoteToken, profitFraction, true);
-    const takeProfit = this.config.quoteAmount.add(profitAmount);
-    let stopLoss: TokenAmount;
-
-    if (!this.stopLoss.get(poolKeys.baseMint.toString())) {
-      const lossFraction = this.config.quoteAmount.mul(this.config.stopLoss).numerator.div(new BN(100));
-      const lossAmount = new TokenAmount(this.config.quoteToken, lossFraction, true);
-      stopLoss = this.config.quoteAmount.subtract(lossAmount);
-
-      this.stopLoss.set(poolKeys.baseMint.toString(), stopLoss);
-    } else {
-      stopLoss = this.stopLoss.get(poolKeys.baseMint.toString())!;
-    }
-
-    const slippage = new Percent(this.config.sellSlippage, 100);
-    let timesChecked = 0;
-    //let telegram_status_message_id: number | undefined = undefined;
-
-    do {
-      try {
-        const poolInfo = await Liquidity.fetchInfo({
-          connection: this.connection,
-          poolKeys,
-        });
-
-        const amountOut = Liquidity.computeAmountOut({
-          poolKeys,
-          poolInfo,
-          amountIn: amountIn,
-          currencyOut: this.config.quoteToken,
-          slippage,
-        }).amountOut as TokenAmount;
-
-        if (this.config.trailingStopLoss) {
-          const trailingLossFraction = amountOut.mul(this.config.stopLoss).numerator.div(new BN(100));
-          const trailingLossAmount = new TokenAmount(this.config.quoteToken, trailingLossFraction, true);
-          const trailingStopLoss = amountOut.subtract(trailingLossAmount);
-
-          if (trailingStopLoss.gt(stopLoss)) {
-            logger.trace(
-              { mint: poolKeys.baseMint.toString() },
-              `Updating trailing stop loss from ${stopLoss.toFixed()} to ${trailingStopLoss.toFixed()}`,
-            );
-            this.stopLoss.set(poolKeys.baseMint.toString(), trailingStopLoss);
-            stopLoss = trailingStopLoss;
-          }
-        }
-
-        if (this.config.skipSellingIfLostMoreThan > 0) {
-          const stopSellingFraction = this.config.quoteAmount
-            .mul(100 - this.config.skipSellingIfLostMoreThan)
-            .numerator.div(new BN(100));
-
-          const stopSellingAmount = new TokenAmount(this.config.quoteToken, stopSellingFraction, true);
-
-          if (amountOut.lt(stopSellingAmount)) {
-            logger.info(
-              { mint: poolKeys.baseMint.toString() },
-              `Token dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped. Initial: ${this.config.quoteAmount.toFixed()} | Current: ${amountOut.toFixed()}`,
-            );
-
-            this.sendTelegramMessage(`🚨RUG RUG RUG🚨\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nToken dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped\nInitial: <code>${this.config.quoteAmount.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>`, poolKeys.baseMint.toString())
-
-            this.stopLoss.delete(poolKeys.baseMint.toString());
-            return false;
-          }
-        }
-
-        logger.debug(
-          { mint: poolKeys.baseMint.toString() },
-          `${timesChecked}/${timesToCheck} Take profit: ${takeProfit.toFixed()} | Stop loss: ${stopLoss.toFixed()} | Current: ${amountOut.toFixed()}`,
-        );
-
-        // if (timesChecked % 10 === 0 && timesChecked !== 0) {
-        //   this.sendTelegramMessage(`❕Status update❕\n\n<code>${poolKeys.baseMint.toString()}</code>\n\nTake profit: <code>${takeProfit.toFixed()}</code>\nStop loss: <code>${stopLoss.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>\n\n${timesChecked}/${timesToCheck}`, poolKeys.baseMint.toString(), telegram_status_message_id)
-        //     .then(x => {
-        //       if (x) {
-        //         telegram_status_message_id = x.message_id;
-        //       }
-        //     });
-        // }
-
-        if (amountOut.lt(stopLoss)) {
-          this.stopLoss.delete(poolKeys.baseMint.toString());
-          // this.sendTelegramMessage(`😡STOP LOSS😡\n\n<code>${poolKeys.baseMint.toString()}</code>\n\nTake profit: <code>${takeProfit.toFixed()}</code>\nStop loss: <code>${stopLoss.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>\n\n${timesChecked}/${timesToCheck}`, poolKeys.baseMint.toString(), telegram_status_message_id)
-          //   .then(x => {
-          //     if (x) {
-          //       telegram_status_message_id = x.message_id;
-          //     }
-          //   });
-          break;
-        }
-
-        if (amountOut.gt(takeProfit)) {
-          this.stopLoss.delete(poolKeys.baseMint.toString());
-          // this.sendTelegramMessage(`😸TAKE PROFIT😸\n\n<code>${poolKeys.baseMint.toString()}</code>\n\nTake profit: <code>${takeProfit.toFixed()}</code>\nStop loss: <code>${stopLoss.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>\n\n${timesChecked}/${timesToCheck}`, poolKeys.baseMint.toString(), telegram_status_message_id)
-          //   .then(x => {
-          //     if (x) {
-          //       telegram_status_message_id = x.message_id;
-          //     }
-          //   });
-          break;
-        }
-
-        await sleep(this.config.priceCheckInterval);
-      } catch (e) {
-        logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
-      } finally {
-        timesChecked++;
-      }
-    } while (timesChecked < timesToCheck);
-
-    return true;
-  }
-
-  private async sendTelegramMessage(message: string, mint: string, messageId?: number): Promise<Message.TextMessage | undefined> {
-    try {
-      let kb: InlineKeyboardMarkup = {
-        inline_keyboard: [
-          [
-            { text: '🍔Dexscreener', url: `https://dexscreener.com/solana/${mint}?maker=${this.config.wallet.publicKey}` },
-            { text: 'Rugcheck🔍', url: `https://rugcheck.xyz/tokens/${mint}` }
-          ]
-        ]
-      };
-
-      if (messageId) {
-        this.tg_bot.telegram.editMessageText(this.config.telegramChatId, messageId, undefined, message, {
-          parse_mode: "HTML", reply_markup: kb
-        });
-        return undefined;
-
-      } else {
-        return await this.tg_bot.telegram.sendMessage(this.config.telegramChatId, message, {
-          parse_mode: "HTML", reply_markup: kb
-        });
-      }
-
-    }
-    catch (e) {
-      return undefined;
-    }
   }
 }
 

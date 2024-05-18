@@ -52,13 +52,17 @@ import {
   CHECK_HOLDERS,
   CHECK_ABNORMAL_DISTRIBUTION,
   CHECK_TOKEN_DISTRIBUTION,
-  TELEGRAM_BOT_TOKEN,
-  TELEGRAM_CHAT_ID
+  TELEGRAM_CHAT_ID,
+  BLACKLIST_REFRESH_INTERVAL,
+  MACD_SHORT_PERIOD,
+  MACD_LONG_PERIOD,
+  MACD_SIGNAL_PERIOD,
+  RSI_PERIOD,
+  TELEGRAM_BOT_TOKEN
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
-import { Telegraf } from 'telegraf';
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -148,7 +152,11 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Check Holders: ${botConfig.checkHolders}`);    
   logger.info(`Check Token Distribution: ${botConfig.checkTokenDistribution}`);
   logger.info(`Check Abnormal Distribution: ${botConfig.checkAbnormalDistribution}`);
+  logger.info(`Blacklist refresh interval: ${BLACKLIST_REFRESH_INTERVAL}`);
 
+  logger.info(`Buy signal MACD: ${MACD_SHORT_PERIOD}/${MACD_LONG_PERIOD}/${MACD_SIGNAL_PERIOD}`);
+  logger.info(`Buy signal RSI: ${RSI_PERIOD}`);
+  
   logger.info('------- CONFIGURATION END -------');
 
   logger.info('Bot is running! Press CTRL + C to stop it.');
@@ -157,9 +165,6 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
 const runListener = async () => {
   logger.level = LOG_LEVEL;
   logger.info('Bot is starting...');
-
-  const tg_bot = new Telegraf(TELEGRAM_BOT_TOKEN);
-
 
   const marketCache = new MarketCache(connection);
   const poolCache = new PoolCache();
@@ -212,10 +217,16 @@ const runListener = async () => {
     checkHolders:CHECK_HOLDERS,
     checkTokenDistribution:CHECK_TOKEN_DISTRIBUTION,
     checkAbnormalDistribution:CHECK_ABNORMAL_DISTRIBUTION,
-    telegramChatId:TELEGRAM_CHAT_ID
+    telegramChatId:TELEGRAM_CHAT_ID,
+    telegramBotToken: TELEGRAM_BOT_TOKEN,
+    blacklistRefreshInterval: BLACKLIST_REFRESH_INTERVAL,
+    MACDLongPeriod: MACD_LONG_PERIOD,
+    MACDShortPeriod: MACD_SHORT_PERIOD,
+    MACDSignalPeriod: MACD_SIGNAL_PERIOD,
+    RSIPeriod: RSI_PERIOD
   };
 
-  const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig, tg_bot);
+  const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
   const valid = await bot.validate();
 
   if (!valid) {

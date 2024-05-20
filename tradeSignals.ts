@@ -5,6 +5,7 @@ import { BotConfig } from "./bot";
 import { TechnicalAnalysis } from "./technicalAnalysis";
 import BN from "bn.js";
 import { Messaging } from "./messaging";
+import { MintLayout } from "@solana/spl-token";
 
 export class TradeSignals {
 
@@ -23,14 +24,16 @@ export class TradeSignals {
 
         logger.trace({ mint: poolKeys.baseMint.toString() }, `Waiting for buy signal`);
 
-        let timesToCheck = (10 * 60) / 2; //10min with 2s interval
+        const totalTimeToCheck = this.config.buySignalTimeToWait;
+        const interval = this.config.buySignalPriceInterval;
+        const maxSignalWaitTime = totalTimeToCheck * (this.config.buySignalFractionPercentageTimeToWait / 100)
 
-        let maxSignalWaitTries = 60;
+        let startTime = Date.now();
         let timesChecked = 0;
-
         let prices: number[] = [];
 
-        // let previousRSI = null;
+        let previousRSI = null;
+
         do {
             try {
                 let poolInfo = await Liquidity.fetchInfo({
@@ -39,7 +42,6 @@ export class TradeSignals {
                 });
 
                 let tokenPriceBN = Liquidity.getRate(poolInfo);
-
                 if (prices.length === 0 || parseFloat(tokenPriceBN.toFixed(16)) !== prices[prices.length - 1]) {
                     prices.push(parseFloat(tokenPriceBN.toFixed(16)));
                 }
@@ -47,10 +49,18 @@ export class TradeSignals {
                 let currentRSI = this.TA.calculateRSIv2(prices);
                 let macd = this.TA.calculateMACDv2(prices);
 
-                logger.trace({ mint: poolKeys.baseMint.toString() }, `${timesChecked}/${timesToCheck} Waiting for buy signal: Price: ${tokenPriceBN.toFixed(16)}, RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
+                if (previousRSI !== currentRSI) {
+                    logger.trace({ mint: poolKeys.baseMint.toString() }, `(${timesChecked}) Waiting for buy signal: Price: ${tokenPriceBN.toFixed(16)}, RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
+                    previousRSI = currentRSI;
+                }
 
-                if (timesChecked >= maxSignalWaitTries && currentRSI == 0 && !macd.macd) {
-                    logger.trace(`Not enough data for signal after ${maxSignalWaitTries} tries, skipping buy signal`);
+                if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
+                    logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                    return false;
+                }
+
+                if (((Date.now() - startTime) > maxSignalWaitTime) && currentRSI == 0 && !macd.macd) {
+                    logger.trace(`Not enough data for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
                     return false;
                 }
 
@@ -59,21 +69,14 @@ export class TradeSignals {
                     return true;
                 }
 
-                // if (currentRSI > 0) {
-                //   if (previousRSI != null && previousRSI > 0 && previousRSI < 30 && currentRSI >= 30) {
-                //     previousRSI = currentRSI;
-                //     return true;
-                //   }
-                //   previousRSI = currentRSI;
-                // }
-
-                await sleep(1000);
             } catch (e) {
                 logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
+                continue;
             } finally {
                 timesChecked++;
+                await sleep(interval);
             }
-        } while (timesChecked < timesToCheck);
+        } while ((Date.now() - startTime) < totalTimeToCheck);
 
         return false;
     }
@@ -161,12 +164,12 @@ export class TradeSignals {
 
                 if (amountOut.lt(stopLoss)) {
                     this.stopLoss.delete(poolKeys.baseMint.toString());
-                    break;
+                    return true;
                 }
 
                 if (amountOut.gt(takeProfit)) {
                     this.stopLoss.delete(poolKeys.baseMint.toString());
-                    break;
+                    return true;
                 }
 
                 await sleep(this.config.priceCheckInterval);
@@ -177,6 +180,12 @@ export class TradeSignals {
             }
         } while (timesChecked < timesToCheck);
 
-        return true;
+
+        if (this.config.autoSellWithoutSellSignal) {
+            return true;
+        } else {
+            await this.messaging.sendTelegramMessage(`🚫NO SELL🚫\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nTime ran out, sell stopped, you're a bagholder now`, poolKeys.baseMint.toString())
+            return false;
+        }
     }
 }

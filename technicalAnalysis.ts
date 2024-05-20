@@ -2,6 +2,35 @@ import { BotConfig } from "./bot";
 
 export class TechnicalAnalysis {    
     constructor(public botConfig: BotConfig) { }
+        
+    public calculateEMAs = (prices: number[]): { emaS: number, emaL: number, prevEmaS: number } => {
+        const shortPeriod = 4;
+        const longPeriod = 24;
+
+        if (prices.length < longPeriod - 1) {
+            return { emaS: null, emaL: null, prevEmaS: null };
+        }
+
+        const shortMultiplier = 2 / (shortPeriod + 1);
+        const longMultiplier = 2 / (longPeriod + 1);
+
+        let shortEMA = prices.slice(0, shortPeriod).reduce((acc, val) => acc + val, 0) / shortPeriod;
+        let longEMA = prices.slice(0, longPeriod).reduce((acc, val) => acc + val, 0) / longPeriod;
+
+        let prevEmaS = shortEMA;
+
+        prices.forEach(price => {
+            prevEmaS = shortEMA;
+            shortEMA = (price - shortEMA) * shortMultiplier + shortEMA;
+            longEMA = (price - longEMA) * longMultiplier + longEMA;
+        });
+
+        return {
+            emaS: shortEMA,
+            emaL: longEMA,
+            prevEmaS: prevEmaS
+        };
+    }
 
     public calculateMACDv2 = (prices: number[]): { macd: number, signal: number } => {
         const shortPeriod = this.botConfig.MACDShortPeriod;

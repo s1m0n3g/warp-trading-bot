@@ -58,7 +58,12 @@ import {
   MACD_LONG_PERIOD,
   MACD_SIGNAL_PERIOD,
   RSI_PERIOD,
-  TELEGRAM_BOT_TOKEN
+  TELEGRAM_BOT_TOKEN,
+  AUTO_SELL_WITHOUT_SELL_SIGNAL,
+  BUY_SIGNAL_TIME_TO_WAIT,
+  BUY_SIGNAL_PRICE_INTERVAL,
+  BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
+  BUY_SIGNAL_LOW_VOLUME_THRESHOLD
 } from './helpers';
 import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -223,7 +228,12 @@ const runListener = async () => {
     MACDLongPeriod: MACD_LONG_PERIOD,
     MACDShortPeriod: MACD_SHORT_PERIOD,
     MACDSignalPeriod: MACD_SIGNAL_PERIOD,
-    RSIPeriod: RSI_PERIOD
+    RSIPeriod: RSI_PERIOD,
+    autoSellWithoutSellSignal: AUTO_SELL_WITHOUT_SELL_SIGNAL,
+    buySignalTimeToWait: BUY_SIGNAL_TIME_TO_WAIT,
+    buySignalPriceInterval: BUY_SIGNAL_PRICE_INTERVAL,
+    buySignalFractionPercentageTimeToWait: BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
+    buySignalLowVolumeThreshold: BUY_SIGNAL_LOW_VOLUME_THRESHOLD,
   };
 
   const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
@@ -287,3 +297,4 @@ const runListener = async () => {
 };
 
 runListener();
+

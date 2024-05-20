@@ -56,6 +56,10 @@ You should see the following output:
 - `AUTO_BUY_DELAY` - Delay in milliseconds before buying a token.
 - `MAX_BUY_RETRIES` - Maximum number of retries for buying a token.
 - `BUY_SLIPPAGE` - Slippage %
+- `BUY_SIGNAL_TIME_TO_WAIT` - Time to wait for buy signal in milliseconds
+- `BUY_SIGNAL_PRICE_INTERVAL` - Time between price checks for indicators
+- `BUY_SIGNAL_FRACTION_TIME_TO_WAIT` - % fraction how long to wait for indicator population of total time
+- `BUY_SIGNAL_LOW_VOLUME_THRESHOLD` - amount of different prices to collect before considered too low of a volume in relation to indicator population timer
 
 #### Sell
 
@@ -76,6 +80,7 @@ You should see the following output:
 - `SKIP_SELLING_IF_LOST_MORE_THAN` - If token loses more than X% of value, bot will not try to sell
   - This config is useful if you find yourself in a situation when rugpull happen, and you failed to sell. In this case there is a big loss of value, and sometimes it's more beneficial to keep the token, instead of selling it for almost nothing.
 - `SELL_SLIPPAGE` - Slippage %.
+- `AUTO_SELL_WITHOUT_SELL_SIGNAL` - Set `false` to keep holding tokens in case didn't find sell signal
 
 #### Snipe list
 

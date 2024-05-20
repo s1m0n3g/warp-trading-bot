@@ -62,11 +62,15 @@ export interface BotConfig {
   MACDLongPeriod: number,
   MACDShortPeriod: number,
   MACDSignalPeriod: number,
-  RSIPeriod: number
+  RSIPeriod: number,
+  autoSellWithoutSellSignal: boolean,
+  buySignalTimeToWait: number,
+  buySignalPriceInterval: number,
+  buySignalFractionPercentageTimeToWait: number,
+  buySignalLowVolumeThreshold: number,
 }
 
-export class Bot {
-  // snipe list
+export class Bot {  
   private readonly snipeListCache?: SnipeListCache;
   private readonly blacklistCache?: BlacklistCache;
 
@@ -451,7 +455,7 @@ export class Bot {
         }
 
         if (this.config.filterCheckInterval > 1) {
-          logger.trace(`${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 60000} min.`);
+          logger.trace({ mint: poolKeys.baseMint.toString() }, `${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 60000} min.`);
         }
         await sleep(this.config.filterCheckInterval);
       } finally {

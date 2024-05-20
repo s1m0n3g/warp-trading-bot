@@ -41,6 +41,11 @@ export const QUOTE_AMOUNT = retrieveEnvVariable('QUOTE_AMOUNT', logger);
 export const MAX_BUY_RETRIES = Number(retrieveEnvVariable('MAX_BUY_RETRIES', logger));
 export const BUY_SLIPPAGE = Number(retrieveEnvVariable('BUY_SLIPPAGE', logger));
 
+export const BUY_SIGNAL_TIME_TO_WAIT = Number(retrieveEnvVariable('BUY_SIGNAL_TIME_TO_WAIT', logger));
+export const BUY_SIGNAL_PRICE_INTERVAL = Number(retrieveEnvVariable('BUY_SIGNAL_PRICE_INTERVAL', logger));
+export const BUY_SIGNAL_FRACTION_TIME_TO_WAIT = Number(retrieveEnvVariable('BUY_SIGNAL_FRACTION_TIME_TO_WAIT', logger));
+export const BUY_SIGNAL_LOW_VOLUME_THRESHOLD = Number(retrieveEnvVariable('BUY_SIGNAL_LOW_VOLUME_THRESHOLD', logger));
+
 // Sell
 export const AUTO_SELL = retrieveEnvVariable('AUTO_SELL', logger) === 'true';
 export const AUTO_SELL_DELAY = Number(retrieveEnvVariable('AUTO_SELL_DELAY', logger));
@@ -52,6 +57,7 @@ export const PRICE_CHECK_INTERVAL = Number(retrieveEnvVariable('PRICE_CHECK_INTE
 export const PRICE_CHECK_DURATION = Number(retrieveEnvVariable('PRICE_CHECK_DURATION', logger));
 export const SELL_SLIPPAGE = Number(retrieveEnvVariable('SELL_SLIPPAGE', logger));
 export const SKIP_SELLING_IF_LOST_MORE_THAN = Number(retrieveEnvVariable('SKIP_SELLING_IF_LOST_MORE_THAN', logger));
+export const AUTO_SELL_WITHOUT_SELL_SIGNAL = retrieveEnvVariable('AUTO_SELL_WITHOUT_SELL_SIGNAL', logger) === 'true';
 
 // Filters
 export const FILTER_CHECK_INTERVAL = Number(retrieveEnvVariable('FILTER_CHECK_INTERVAL', logger));

@@ -53,10 +53,8 @@ export class TopHolderDistributionFilter implements Filter {
             // Fetch the total supply of the token from its mint account
             const mintAccountInfo = await this.connection.getAccountInfo(poolKeys.baseMint);
             let totalSupply = 0;
-            let supplyDecimals = 0;
             if (mintAccountInfo && mintAccountInfo.data.length === MintLayout.span) {
                 const mintData = MintLayout.decode(mintAccountInfo.data);
-                supplyDecimals = mintData.decimals;
                 totalSupply = Number(mintData.supply);  // Adjust based on your needs (handle big numbers appropriately)
             }
             const largestAccountsResponse = await this.connection.getTokenLargestAccounts(poolKeys.baseMint);
@@ -83,7 +81,6 @@ export class TopHolderDistributionFilter implements Filter {
                 message += `\nWarning: Top ten holders collectively exceed threshold of ${TOP_10_MAX_PERCENTAGE}% with ${distributionResult.topTenPercentage.toFixed(2)}%.`;
             }
 
-            // logger.trace(`Top holders total SOL: ${distributionResult.topHoldersTotalSol}`);
             if (distributionResult.isTopHoldersPoor) {
                 message += `.\nWarning: Top holders are poor, total net worth: ${distributionResult.topHoldersTotalSol.toFixed(3)}.`;
             }

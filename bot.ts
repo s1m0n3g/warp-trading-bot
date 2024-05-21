@@ -18,13 +18,14 @@ import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, Token
 import { MarketCache, PoolCache, SnipeListCache } from './cache';
 import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
-import { createPoolKeys, logger, NETWORK, sleep } from './helpers';
+import { createPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
 import { Semaphore } from 'async-mutex';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import { BlacklistCache } from './cache/blacklist.cache';
 import { TradeSignals } from './tradeSignals';
 import { Messaging } from './messaging';
+import { WhitelistCache } from './cache/whitelist.cache';
 
 export interface BotConfig {
   wallet: Keypair;
@@ -70,9 +71,10 @@ export interface BotConfig {
   buySignalLowVolumeThreshold: number,
 }
 
-export class Bot {  
+export class Bot {
   private readonly snipeListCache?: SnipeListCache;
   private readonly blacklistCache?: BlacklistCache;
+  private readonly whitelistCache?: WhitelistCache;
 
   private readonly semaphore: Semaphore;
   private sellExecutionCount = 0;
@@ -97,6 +99,9 @@ export class Bot {
 
     this.tradeSignals = new TradeSignals(connection, config, this.messaging);
 
+    this.whitelistCache = new WhitelistCache();
+    this.whitelistCache.init();
+
     this.blacklistCache = new BlacklistCache();
     this.blacklistCache.init();
 
@@ -119,19 +124,39 @@ export class Bot {
     return true;
   }
 
+  public async whitelistSnipe(accountId: PublicKey, poolState: LiquidityStateV4): Promise<boolean> {
+    if (this.whitelistCache.whitelistIsEmpty()) {
+      return false;
+    }
+
+    const [market] = await Promise.all([
+      this.marketStorage.get(poolState.marketId.toString()),
+      getAssociatedTokenAddress(poolState.baseMint, this.config.wallet.publicKey),
+    ]);
+    const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
+
+    //updateAuthority is whitelisted
+    return await this.whitelistCache.isInList(this.connection, poolKeys);
+  }
 
   public async buy(accountId: PublicKey, poolState: LiquidityStateV4, lag: number = 0) {
     logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
+
+    const whitelistSnipe = await this.whitelistSnipe(accountId, poolState);
 
     if (this.config.useSnipeList && !this.snipeListCache?.isInList(poolState.baseMint.toString())) {
       logger.debug({ mint: poolState.baseMint.toString() }, `Skipping buy because token is not in a snipe list`);
       return;
     }
 
-    if (this.config.autoBuyDelay > 0) {
-      logger.debug({ mint: poolState.baseMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
-      await sleep(this.config.autoBuyDelay); //  - (lag * 1000)
+    if (!whitelistSnipe) {
+      if (this.config.autoBuyDelay > 0) {
+        logger.debug({ mint: poolState.baseMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
+        await sleep(this.config.autoBuyDelay); //  - (lag * 1000)
+      }
     }
+
+
 
     const numberOfActionsBeingProcessed =
       this.config.maxTokensAtTheTime - this.semaphore.getValue() + this.sellExecutionCount;
@@ -152,20 +177,23 @@ export class Bot {
       ]);
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
 
-      if (!this.config.useSnipeList) {
-        const match = await this.filterMatch(poolKeys);
+      if (!whitelistSnipe) {
+        if (!this.config.useSnipeList) {
 
-        if (!match) {
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+          const match = await this.filterMatch(poolKeys);
+
+          if (!match) {
+            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            return;
+          }
+        }
+
+        let buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
+
+        if (!buySignal) {
+          logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
           return;
         }
-      }
-
-      let buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
-
-      if (!buySignal) {
-        logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
-        return;
       }
 
       const startTime = Date.now();
@@ -232,17 +260,24 @@ export class Bot {
     this.sellExecutionCount++;
 
     try {
-      logger.trace({ mint: rawAccount.mint }, `Processing new token...`);
-
       const poolData = await this.poolStorage.get(rawAccount.mint.toString());
+
+      if (poolData && poolData.sold) {
+        return;
+      }
+
+      logger.trace({ mint: rawAccount.mint }, `Processing new token...`);
 
       if (!poolData) {
         logger.trace({ mint: rawAccount.mint.toString() }, `Token pool data is not found, can't sell`);
         return;
       }
 
+
+      let moonshotConditionAmount = KEEP_5_PERCENT_FOR_MOONSHOTS ? (rawAccount.amount * BigInt(95)) / BigInt(100) : rawAccount.amount;
+
       const tokenIn = new Token(TOKEN_PROGRAM_ID, poolData.state.baseMint, poolData.state.baseDecimal.toNumber());
-      const tokenAmountIn = new TokenAmount(tokenIn, rawAccount.amount, true);
+      const tokenAmountIn = new TokenAmount(tokenIn, moonshotConditionAmount, true);
 
       if (tokenAmountIn.isZero()) {
         logger.info({ mint: rawAccount.mint.toString() }, `Empty balance, can't sell`);
@@ -267,6 +302,10 @@ export class Bot {
             }
           }
 
+          if (KEEP_5_PERCENT_FOR_MOONSHOTS) { //only if you aim for the moon
+            this.poolStorage.markAsSold(rawAccount.mint.toString());
+          }
+
           logger.info(
             { mint: rawAccount.mint },
             `Send sell transaction attempt: ${i + 1}/${this.config.maxSellRetries}`,
@@ -285,7 +324,6 @@ export class Bot {
           );
 
           if (result.confirmed) {
-            let profitOrLoss = 0;
 
             try {
               this.connection.getParsedTransaction(result.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 })
@@ -305,9 +343,11 @@ export class Bot {
                       .map(x => x.uiTokenAmount.uiAmount)
                       .reduce((a, b) => a + b, 0); // Sum the post values
 
-                    profitOrLoss = (post - pre) - parseFloat(this.config.quoteAmount.toFixed());
+                    let quoteAmountNumber = parseFloat(this.config.quoteAmount.toFixed());
+                    let profitOrLoss = (post - pre) - quoteAmountNumber;
+                    let percentageChange = (profitOrLoss / quoteAmountNumber) * 100
 
-                    await this.messaging.sendTelegramMessage(`⭕Confirmed sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${profitOrLoss < 0 ? "🔴Loss👎 " : "🟢Profit👍 "}<code>${profitOrLoss.toFixed(5)}</code>\n\nRetries <code>${i + 1}/${this.config.maxSellRetries}</code>`, rawAccount.mint.toString());
+                    await this.messaging.sendTelegramMessage(`⭕Confirmed sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${profitOrLoss < 0 ? "🔴Loss " : "🟢Profit "}<code>${profitOrLoss.toFixed(5)} ${this.config.quoteToken.symbol} (${(percentageChange).toFixed(2)}%)</code>\n\nRetries <code>${i + 1}/${this.config.maxSellRetries}</code>`, rawAccount.mint.toString());
                   }
                 })
                 .catch((error) => {
@@ -411,7 +451,8 @@ export class Bot {
           ]
           : []),
         ...innerTransaction.instructions,
-        ...(direction === 'sell' ? [createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey)] : []),
+        // Close the account if we are selling and not keeping 5% for moonshots
+        ...((direction === 'sell' && !KEEP_5_PERCENT_FOR_MOONSHOTS) ? [createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey)] : []),
       ],
     }).compileToV0Message();
 
@@ -455,7 +496,7 @@ export class Bot {
         }
 
         if (this.config.filterCheckInterval > 1) {
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 60000} min.`);
+          logger.trace({ mint: poolKeys.baseMint.toString() }, `${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 1000} sec.`);
         }
         await sleep(this.config.filterCheckInterval);
       } finally {
@@ -466,4 +507,3 @@ export class Bot {
     return false;
   }
 }
-

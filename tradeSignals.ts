@@ -5,7 +5,6 @@ import { BotConfig } from "./bot";
 import { TechnicalAnalysis } from "./technicalAnalysis";
 import BN from "bn.js";
 import { Messaging } from "./messaging";
-import { MintLayout } from "@solana/spl-token";
 
 export class TradeSignals {
 
@@ -28,6 +27,9 @@ export class TradeSignals {
         const interval = this.config.buySignalPriceInterval;
         const maxSignalWaitTime = totalTimeToCheck * (this.config.buySignalFractionPercentageTimeToWait / 100)
 
+        //used strategy
+        let strategy = 1;
+
         let startTime = Date.now();
         let timesChecked = 0;
         let prices: number[] = [];
@@ -46,27 +48,65 @@ export class TradeSignals {
                     prices.push(parseFloat(tokenPriceBN.toFixed(16)));
                 }
 
-                let currentRSI = this.TA.calculateRSIv2(prices);
-                let macd = this.TA.calculateMACDv2(prices);
+                if (strategy == 1) {
+                    let currentRSI = this.TA.calculateRSIv2(prices);
+                    let macd = this.TA.calculateMACDv2(prices);
 
-                if (previousRSI !== currentRSI) {
-                    logger.trace({ mint: poolKeys.baseMint.toString() }, `(${timesChecked}) Waiting for buy signal: Price: ${tokenPriceBN.toFixed(16)}, RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
-                    previousRSI = currentRSI;
+                    if (previousRSI !== currentRSI) {
+                        logger.trace({ 
+                            mint: poolKeys.baseMint.toString(),
+                            price: tokenPriceBN.toFixed(16)
+                        }, `(${timesChecked}) Waiting for buy signal: RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
+                        previousRSI = currentRSI;
+                    }
+
+                    if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
+                        logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                        return false;
+                    }
+
+                    if (((Date.now() - startTime) > maxSignalWaitTime) && currentRSI == 0 && !macd.macd) {
+                        logger.trace(`Not enough data for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                        return false;
+                    }
+
+                    if (currentRSI > 0 && currentRSI < 30 && macd.macd && macd.signal && macd.macd > macd.signal) {
+                        logger.trace("RSI is less than 30, macd + signal = long, sending buy signal");
+                        return true;
+                    }
                 }
 
-                if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
-                    logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
-                    return false;
-                }
+                if (strategy == 2) {
+                    let { RSI, RSI_EMA_11, RSI_prevEMA_11 } = this.TA.calculateRSIv3(prices, 14);
+                    let macd = this.TA.calculateMACDv2(prices, 8, 15, 6);
+                    let { EMA_3, EMA_18, prevEMA_3 } = this.TA.calculateEMAs(prices);
 
-                if (((Date.now() - startTime) > maxSignalWaitTime) && currentRSI == 0 && !macd.macd) {
-                    logger.trace(`Not enough data for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
-                    return false;
-                }
+                    let isMacdAboveSignal = macd.macd > macd.signal;
+                    let isEmaLAboveTokenPrice = EMA_18 > prices[prices.length - 1];
+                    let isEmaSAbovePrevEmaS = EMA_3 > prevEMA_3;
 
-                if (currentRSI > 0 && currentRSI < 30 && macd.macd && macd.signal && macd.macd > macd.signal) {
-                    logger.trace("RSI is less than 30, macd + signal = long, sending buy signal");
-                    return true;
+                    if (previousRSI !== RSI) {
+                        logger.trace({
+                            mint: poolKeys.baseMint.toString(),
+                            price: tokenPriceBN.toFixed(16),
+                        }, `(${timesChecked}) Waiting for buy signal: RSI: ${RSI.toFixed(3)}, RSI_EMA_11: ${RSI_EMA_11.toFixed(3)}, RSI_EMA_11 > RSI_EMA_11[-1]: ${RSI_prevEMA_11 < RSI_EMA_11}, macd>signal: ${isMacdAboveSignal}, price<ema_18: ${isEmaLAboveTokenPrice}, ema_3>ema_3[-1]: ${isEmaSAbovePrevEmaS}`);
+                        previousRSI = RSI;
+                    }
+
+                    if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
+                        logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                        return false;
+                    }
+
+                    if (((Date.now() - startTime) > maxSignalWaitTime) && RSI == 0 && !macd.macd) {
+                        logger.trace(`Not enough data for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                        return false;
+                    }
+
+                    if (RSI > 0 && RSI < 50 && RSI_EMA_11 < 30 && RSI_prevEMA_11 < RSI_EMA_11 && macd.macd && macd.signal && macd.macd > macd.signal && EMA_18 > prices[prices.length - 1] && EMA_3 > prevEMA_3) {
+                        logger.trace("RSI is less than 30, macd + signal = long, and EMAs going mad, sending buy signal");
+                        return true;
+                    }
                 }
 
             } catch (e) {

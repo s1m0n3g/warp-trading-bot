@@ -63,7 +63,7 @@ export class PoolFilters {
     }
 
     // not optional
-    this.filters.push(new BlacklistFilter(connection, getMetadataAccountDataSerializer(), blacklistCache));
+    this.filters.push(new BlacklistFilter(connection, blacklistCache));
 
     if (!args.minPoolSize.isZero() || !args.maxPoolSize.isZero()) {
       this.filters.push(new PoolSizeFilter(connection, args.quoteToken, args.minPoolSize, args.maxPoolSize));

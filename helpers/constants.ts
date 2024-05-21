@@ -58,6 +58,8 @@ export const PRICE_CHECK_DURATION = Number(retrieveEnvVariable('PRICE_CHECK_DURA
 export const SELL_SLIPPAGE = Number(retrieveEnvVariable('SELL_SLIPPAGE', logger));
 export const SKIP_SELLING_IF_LOST_MORE_THAN = Number(retrieveEnvVariable('SKIP_SELLING_IF_LOST_MORE_THAN', logger));
 export const AUTO_SELL_WITHOUT_SELL_SIGNAL = retrieveEnvVariable('AUTO_SELL_WITHOUT_SELL_SIGNAL', logger) === 'true';
+export const KEEP_5_PERCENT_FOR_MOONSHOTS = retrieveEnvVariable('KEEP_5_PERCENT_FOR_MOONSHOTS', logger) === 'true';
+
 
 // Filters
 export const FILTER_CHECK_INTERVAL = Number(retrieveEnvVariable('FILTER_CHECK_INTERVAL', logger));
@@ -72,9 +74,10 @@ export const MIN_POOL_SIZE = retrieveEnvVariable('MIN_POOL_SIZE', logger);
 export const MAX_POOL_SIZE = retrieveEnvVariable('MAX_POOL_SIZE', logger);
 export const USE_SNIPE_LIST = retrieveEnvVariable('USE_SNIPE_LIST', logger) === 'true';
 export const SNIPE_LIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('SNIPE_LIST_REFRESH_INTERVAL', logger));
+export const BLACKLIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('BLACKLIST_REFRESH_INTERVAL', logger));
+export const WHITELIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('WHITELIST_REFRESH_INTERVAL', logger));
 
 //Holders filters
-export const BLACKLIST_REFRESH_INTERVAL = Number(retrieveEnvVariable('BLACKLIST_REFRESH_INTERVAL', logger));
 export const CHECK_TOKEN_DISTRIBUTION = retrieveEnvVariable('CHECK_TOKEN_DISTRIBUTION', logger)=== 'true';
 export const TOP_HOLDER_MAX_PERCENTAGE = Number(retrieveEnvVariable('TOP_HOLDER_MAX_PERCENTAGE', logger));
 export const CHECK_ABNORMAL_DISTRIBUTION  = retrieveEnvVariable('CHECK_ABNORMAL_DISTRIBUTION', logger) === 'true';

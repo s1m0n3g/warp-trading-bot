@@ -8,7 +8,6 @@ import { logger } from '../helpers';
 
 export class MutableFilter implements Filter {
   private readonly errorMessage: string[] = [];
-  private cachedResult: FilterResult | undefined = undefined;
 
   constructor(
     private readonly connection: Connection,
@@ -26,10 +25,6 @@ export class MutableFilter implements Filter {
   }
 
   async execute(poolKeys: LiquidityPoolKeysV4): Promise<FilterResult> {
-    if (this.cachedResult) {
-      return this.cachedResult;
-    }
-
     try {
       const metadataPDA = getPdaMetadataKey(poolKeys.baseMint);
       const metadataAccount = await this.connection.getAccountInfo(metadataPDA.publicKey, this.connection.commitment);
@@ -41,26 +36,24 @@ export class MutableFilter implements Filter {
       const deserialize = this.metadataSerializer.deserialize(metadataAccount.data);
       const mutable = !this.checkMutable || deserialize[0].isMutable;
       const hasSocials = !this.checkSocials || (await this.hasSocials(deserialize[0]));
-      const ok = !mutable && hasSocials;
+      const ok = (!this.checkMutable || mutable) && (!this.checkSocials || hasSocials);
+
       const message: string[] = [];
 
-      if (mutable) {
+      if (this.checkMutable && mutable) {
         message.push('metadata can be changed');
       }
 
-      if (!hasSocials) {
+      if (this.checkSocials && !hasSocials) {
         message.push('has no socials');
       }
 
-      const result = { ok: ok, message: ok ? undefined : `MutableSocials -> Token ${message.join(' and ')}` };
+      return { ok: ok, message: ok ? undefined : `MutableSocials -> Token ${message.join(' and ')}` };
 
-      if (!mutable) {
-        this.cachedResult = result;
-      }
-
-      return result;
     } catch (e) {
-      logger.error({ mint: poolKeys.baseMint }, `MutableSocials -> Failed to check ${this.errorMessage.join(' and ')}`);
+      // I comment this part momentarily as you can get a certificates error from the hostname.
+      // The solution would be to set "rejectUnauthorized: false"
+      // logger.error({ mint: poolKeys.baseMint, error: e }, `MutableSocials -> Failed to check ${this.errorMessage.join(' and ')}`);
     }
 
     return {
@@ -70,8 +63,8 @@ export class MutableFilter implements Filter {
   }
 
   private async hasSocials(metadata: MetadataAccountData) {
-    const response = await fetch(metadata.uri);
-    const data = await response.json();
-    return Object.values(data?.extensions ?? {}).filter((value: any) => value).length > 0;
+      const response = await fetch(metadata.uri);
+      const data = await response.json();
+      return Object.values(data?.extensions ?? {}).filter((value: any) => value).length > 0;
   }
 }

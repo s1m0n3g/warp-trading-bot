@@ -65,7 +65,6 @@ export class TechnicalAnalysisCache {
     let cached = this.data.get(mint);
     cached.extendExpiryTime();
     this.set(mint, cached);
-    logger.trace({prices: cached.prices.sort((a, b) => a.date.getTime() - b.date.getTime())}, `p`);
     return cached.prices.sort((a, b) => a.date.getTime() - b.date.getTime()).map(p => p.value);
   }
 

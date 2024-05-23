@@ -36,7 +36,7 @@ export class TradeSignals {
         const maxSignalWaitTime = totalTimeToCheck * (this.config.buySignalFractionPercentageTimeToWait / 100)
 
         //used strategy
-        let strategy = 2;
+        let strategy = 1;
 
         let startTime = Date.now();
         let timesChecked = 0;

@@ -63,11 +63,13 @@ import {
   BUY_SIGNAL_TIME_TO_WAIT,
   BUY_SIGNAL_PRICE_INTERVAL,
   BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
-  BUY_SIGNAL_LOW_VOLUME_THRESHOLD
+  BUY_SIGNAL_LOW_VOLUME_THRESHOLD,
+  USE_TELEGRAM,
+  USE_TA
 } from './helpers';
-import { version } from './package.json';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
+import { TechnicalAnalysisCache } from './cache/technical-analysis.cache';
 
 const connection = new Connection(RPC_ENDPOINT, {
   wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
@@ -90,7 +92,6 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
 
           WARP DRIVE ACTIVATED 🚀🐟
           Made with ❤️ by humans.
-          Version: ${version}                                          
   `);
 
   const botConfig = bot.config;
@@ -173,6 +174,8 @@ const runListener = async () => {
 
   const marketCache = new MarketCache(connection);
   const poolCache = new PoolCache();
+  const technicalAnalysisCache = new TechnicalAnalysisCache();
+
   let txExecutor: TransactionExecutor;
 
   switch (TRANSACTION_EXECUTOR) {
@@ -234,9 +237,11 @@ const runListener = async () => {
     buySignalPriceInterval: BUY_SIGNAL_PRICE_INTERVAL,
     buySignalFractionPercentageTimeToWait: BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
     buySignalLowVolumeThreshold: BUY_SIGNAL_LOW_VOLUME_THRESHOLD,
+    useTelegram: USE_TELEGRAM,
+    useTechnicalAnalysis: USE_TA
   };
 
-  const bot = new Bot(connection, marketCache, poolCache, txExecutor, botConfig);
+  const bot = new Bot(connection, marketCache, poolCache, txExecutor, technicalAnalysisCache, botConfig);
   const valid = await bot.validate();
 
   if (!valid) {

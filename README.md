@@ -48,6 +48,9 @@ You should see the following output:
 - `CUSTOM_FEE` - If using warp or jito executors this value will be used for transaction fees instead of `COMPUTE_UNIT_LIMIT` and `COMPUTE_UNIT_LIMIT`
   - Minimum value is 0.0001 SOL, but we recommend using 0.006 SOL or above
   - On top of this fee, minimal solana network fee will be applied
+- `MAX_LAG` - Ignore tokens that PoolOpenTime is longer than now + `MAX_LAG` seconds
+- `USE_TA` - Use technical analysis for entries and exits (VERY HARD ON RPC's)
+- `USE_TELEGRAM` - Use telegram bot for notifications
 
 #### Buy
 

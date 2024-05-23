@@ -26,6 +26,7 @@ import { BlacklistCache } from './cache/blacklist.cache';
 import { TradeSignals } from './tradeSignals';
 import { Messaging } from './messaging';
 import { WhitelistCache } from './cache/whitelist.cache';
+import { TechnicalAnalysisCache } from './cache/technical-analysis.cache';
 
 export interface BotConfig {
   wallet: Keypair;
@@ -69,6 +70,8 @@ export interface BotConfig {
   buySignalPriceInterval: number,
   buySignalFractionPercentageTimeToWait: number,
   buySignalLowVolumeThreshold: number,
+  useTechnicalAnalysis: boolean,
+  useTelegram: boolean
 }
 
 export class Bot {
@@ -88,6 +91,7 @@ export class Bot {
     private readonly marketStorage: MarketCache,
     private readonly poolStorage: PoolCache,
     private readonly txExecutor: TransactionExecutor,
+    private readonly technicalAnalysisCache: TechnicalAnalysisCache,
     readonly config: BotConfig,
   ) {
     this.isWarp = txExecutor instanceof WarpTransactionExecutor;
@@ -97,7 +101,7 @@ export class Bot {
 
     this.messaging = new Messaging(config);
 
-    this.tradeSignals = new TradeSignals(connection, config, this.messaging);
+    this.tradeSignals = new TradeSignals(connection, config, this.messaging, technicalAnalysisCache);
 
     this.whitelistCache = new WhitelistCache();
     this.whitelistCache.init();
@@ -191,6 +195,8 @@ export class Bot {
         let buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
 
         if (!buySignal) {
+          await this.messaging.sendTelegramMessage(`😭Skipping buy signal😭\n\nMint <code>${poolKeys.baseMint.toString()}</code>`, poolState.baseMint.toString())
+
           logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
           return;
         }

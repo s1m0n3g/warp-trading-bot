@@ -1,16 +1,17 @@
 import { Telegraf } from "telegraf";
-import { InlineKeyboardMarkup, InlineQueryResultArticle, Message } from "telegraf/typings/core/types/typegram";
+import { InlineKeyboardMarkup, Message } from "telegraf/typings/core/types/typegram";
 import { BotConfig } from "./bot";
-import fs from 'fs';
-import os from 'os';
 
 export class Messaging {
   private readonly tg_bot: Telegraf;
 
   constructor(readonly config: BotConfig) {
-    this.tg_bot = new Telegraf(this.config.telegramBotToken);
-    this.setupBot();
-    this.tg_bot.launch();
+
+    if (this.config.useTelegram) {
+      this.tg_bot = new Telegraf(this.config.telegramBotToken);
+      this.setupBot();
+      this.tg_bot.launch();
+    }
   }
 
   private setupBot() {
@@ -20,15 +21,15 @@ export class Messaging {
         return;
       }
 
-      if(ctx.text?.toLowerCase().includes("/status")){
+      if (ctx.text?.toLowerCase().includes("/status")) {
         ctx.reply("Working", { parse_mode: "HTML" });
       }
 
-      if(ctx.text?.toLowerCase().includes("/config")){
+      if (ctx.text?.toLowerCase().includes("/config")) {
         ctx.reply(this.objectToText(this.config, ["wallet", "telegramBotToken", "telegramChatId"]), { parse_mode: "HTML" });
       }
 
-      if(ctx.text?.toLowerCase().includes("/help")){
+      if (ctx.text?.toLowerCase().includes("/help")) {
         let kb: InlineKeyboardMarkup = {
           inline_keyboard: [
             [
@@ -38,7 +39,7 @@ export class Messaging {
             ]
           ]
         };
-  
+
         ctx.reply("Available commands", { parse_mode: "HTML", reply_markup: kb });
       }
 
@@ -86,6 +87,10 @@ export class Messaging {
   }
 
   public async sendTelegramMessage(message: string, mint: string, messageId?: number): Promise<Message.TextMessage | undefined> {
+    if(!this.config.useTelegram){
+      return null;
+    }
+
     try {
       let kb: InlineKeyboardMarkup = {
         inline_keyboard: [

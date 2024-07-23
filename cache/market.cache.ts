@@ -1,5 +1,5 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getMinimalMarketV3, logger, MINIMAL_MARKET_STATE_LAYOUT_V3, MinimalMarketLayoutV3 } from '../helpers';
+import { getMinimalMarketV3, logger, sleep, MINIMAL_MARKET_STATE_LAYOUT_V3, MinimalMarketLayoutV3 } from '../helpers';
 import { MAINNET_PROGRAM_ID, MARKET_STATE_LAYOUT_V3, Token } from '@raydium-io/raydium-sdk';
 
 export class MarketCache {
@@ -45,14 +45,31 @@ export class MarketCache {
     if (this.keys.has(marketId)) {
       return this.keys.get(marketId)!;
     }
-
-    logger.trace({}, `Fetching new market keys for ${marketId}`);
-    const market = await this.fetch(marketId);
-    this.keys.set(marketId, market);
-    return market;
-  }
-
+  
+    logger.trace(`Fetching new market keys for ${marketId}`);
+  
+    let attempts = 0;
+    const maxRetries = 5;
+  
+    while (attempts < maxRetries) {
+      try {
+        const market = await this.fetch(marketId);
+        this.keys.set(marketId, market);
+        return market;
+      } catch (error) {
+        attempts++;
+        if (attempts >= maxRetries) {
+          logger.error(`Failed to fetch market keys for ${marketId} after ${maxRetries} attempts`);
+          throw error;
+        }
+        logger.warn(`Attempt ${attempts} to fetch market keys for ${marketId} failed. Retrying...`);
+        await sleep(100);
+      }
+    }
+    throw new Error(`Failed to fetch market keys for ${marketId}`);
+  } 
+  
   private fetch(marketId: string): Promise<MinimalMarketLayoutV3> {
     return getMinimalMarketV3(this.connection, new PublicKey(marketId), this.connection.commitment);
   }
-}
+} 

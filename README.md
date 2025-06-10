@@ -71,10 +71,9 @@ You should see the following output:
 - `MAX_SELL_RETRIES` - Maximum number of retries for selling a token.
 - `AUTO_SELL_DELAY` - Delay in milliseconds before auto-selling a token.
 - `PRICE_CHECK_INTERVAL` - Interval in milliseconds for checking the take profit and stop loss conditions.
-  - Set to zero to disable take profit and stop loss.
 - `PRICE_CHECK_DURATION` - Time in milliseconds to wait for stop loss/take profit conditions.
-  - If you don't reach profit or loss bot will auto sell after this time.
-  - Set to zero to disable take profit and stop loss.
+  - If greater than zero the bot will stop checking after this time.
+  - Set to `0` to keep monitoring prices indefinitely without auto-selling.
 - `TAKE_PROFIT` - Percentage profit at which to take profit.
   - Take profit is calculated based on quote mint.
 - `STOP_LOSS` - Percentage loss at which to stop the loss.

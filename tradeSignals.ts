@@ -127,24 +127,27 @@ export class TradeSignals {
     public async waitForSellSignal(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4) {
         this.technicalAnalysisCache.markAsDone(poolKeys.baseMint.toString());
 
-        if (this.config.priceCheckDuration === 0 || this.config.priceCheckInterval === 0) {
+        const infiniteCheck = this.config.priceCheckDuration === 0;
+        if (this.config.priceCheckInterval === 0) {
             return true;
         }
 
-        const timesToCheck = this.config.priceCheckDuration / this.config.priceCheckInterval;
+        const timesToCheck = infiniteCheck ? Number.POSITIVE_INFINITY : this.config.priceCheckDuration / this.config.priceCheckInterval;
         const profitFraction = this.config.quoteAmount.mul(this.config.takeProfit).numerator.div(new BN(100));
         const profitAmount = new TokenAmount(this.config.quoteToken, profitFraction, true);
         const takeProfit = this.config.quoteAmount.add(profitAmount);
-        let stopLoss: TokenAmount;
+        let stopLoss: TokenAmount | null = null;
 
-        if (!this.stopLoss.get(poolKeys.baseMint.toString())) {
-            const lossFraction = this.config.quoteAmount.mul(this.config.stopLoss).numerator.div(new BN(100));
-            const lossAmount = new TokenAmount(this.config.quoteToken, lossFraction, true);
-            stopLoss = this.config.quoteAmount.subtract(lossAmount);
+        if (this.config.stopLoss > 0) {
+            if (!this.stopLoss.get(poolKeys.baseMint.toString())) {
+                const lossFraction = this.config.quoteAmount.mul(this.config.stopLoss).numerator.div(new BN(100));
+                const lossAmount = new TokenAmount(this.config.quoteToken, lossFraction, true);
+                stopLoss = this.config.quoteAmount.subtract(lossAmount);
 
-            this.stopLoss.set(poolKeys.baseMint.toString(), stopLoss);
-        } else {
-            stopLoss = this.stopLoss.get(poolKeys.baseMint.toString())!;
+                this.stopLoss.set(poolKeys.baseMint.toString(), stopLoss);
+            } else {
+                stopLoss = this.stopLoss.get(poolKeys.baseMint.toString())!;
+            }
         }
 
         const slippage = new Percent(this.config.sellSlippage, 100);
@@ -166,7 +169,7 @@ export class TradeSignals {
                     slippage,
                 }).amountOut as TokenAmount;
 
-                if (this.config.trailingStopLoss) {
+                if (this.config.trailingStopLoss && stopLoss) {
                     const trailingLossFraction = amountOut.mul(this.config.stopLoss).numerator.div(new BN(100));
                     const trailingLossAmount = new TokenAmount(this.config.quoteToken, trailingLossFraction, true);
                     const trailingStopLoss = amountOut.subtract(trailingLossAmount);
@@ -203,10 +206,10 @@ export class TradeSignals {
 
                 logger.debug(
                     { mint: poolKeys.baseMint.toString() },
-                    `${timesChecked}/${timesToCheck} Take profit: ${takeProfit.toFixed()} | Stop loss: ${stopLoss.toFixed()} | Current: ${amountOut.toFixed()}`,
+                    `${timesChecked}/${timesToCheck} Take profit: ${takeProfit.toFixed()}${stopLoss ? ' | Stop loss: ' + stopLoss.toFixed() : ''} | Current: ${amountOut.toFixed()}`,
                 );
 
-                if (amountOut.lt(stopLoss)) {
+                if (stopLoss && amountOut.lt(stopLoss)) {
                     this.stopLoss.delete(poolKeys.baseMint.toString());
                     return true;
                 }

@@ -14,8 +14,8 @@ import {
   RawAccount,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { MarketCache, PoolCache, SnipeListCache } from './cache';
+import { Liquidity, LiquidityPoolKeysV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { MarketCache, PoolCache, PoolSnapshot, RaydiumPoolSnapshot, SnipeListCache, isPumpFunPool, isRaydiumPool } from './cache';
 import { PoolFilters } from './filters';
 import {
   TransactionExecutor,
@@ -25,6 +25,16 @@ import {
   isPumpFunPoolState,
 } from './transactions';
 import { createPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
+import { TransactionExecutor } from './transactions';
+import { createPoolKeys, createPumpFunPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
+import {
+  PumpfunPoolEventPayload,
+  createPoolKeys,
+  KEEP_5_PERCENT_FOR_MOONSHOTS,
+  logger,
+  NETWORK,
+  sleep,
+} from './helpers';
 import { Semaphore } from 'async-mutex';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
@@ -78,6 +88,7 @@ export interface BotConfig {
   buySignalLowVolumeThreshold: number;
   useTechnicalAnalysis: boolean;
   useTelegram: boolean;
+  enablePumpfun: boolean;
 }
 
 export class Bot {
@@ -121,6 +132,10 @@ export class Bot {
     }
   }
 
+  public async handlePumpfunPool(_payload: PumpfunPoolEventPayload): Promise<void> {
+    logger.trace('Received pump.fun pool update');
+  }
+
   async validate() {
     try {
       await getAccount(this.connection, this.config.quoteAta, this.connection.commitment);
@@ -134,16 +149,13 @@ export class Bot {
     return true;
   }
 
-  public async whitelistSnipe(accountId: PublicKey, poolState: LiquidityStateV4): Promise<boolean> {
+  public async whitelistSnipe(pool: RaydiumPoolSnapshot): Promise<boolean> {
     if (this.whitelistCache.whitelistIsEmpty()) {
       return false;
     }
 
-    const [market] = await Promise.all([
-      this.marketStorage.get(poolState.marketId.toString()),
-      getAssociatedTokenAddress(poolState.baseMint, this.config.wallet.publicKey),
-    ]);
-    const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
+    const market = await this.marketStorage.get(pool.marketId.toString());
+    const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(pool.id), pool.state, market);
 
     //updateAuthority is whitelisted
     return await this.whitelistCache.isInList(this.connection, poolKeys);
@@ -165,6 +177,29 @@ export class Bot {
 
     if (this.config.useSnipeList && !this.snipeListCache?.isInList(baseMintStr)) {
       logger.debug({ mint: baseMintStr }, `Skipping buy because token is not in a snipe list`);
+
+  public async buy(pool: PoolSnapshot, lag: number = 0) {
+    const cachedPool = await this.poolStorage.get(pool.baseMint.toBase58());
+    const poolSnapshot = cachedPool ?? pool;
+    const poolMint = poolSnapshot.baseMint.toBase58();
+
+    logger.trace({ mint: poolMint }, `Processing new pool...`);
+
+    if (isPumpFunPool(poolSnapshot)) {
+      const pumpFunKeys = createPumpFunPoolKeys(poolSnapshot);
+      logger.warn({ mint: pumpFunKeys.baseMint.toBase58() }, `Pump.fun buy flow not implemented yet`);
+      return;
+    }
+
+    if (!isRaydiumPool(poolSnapshot)) {
+      logger.warn({ mint: poolMint }, `Unsupported pool type for buy operation: ${poolSnapshot.type}`);
+      return;
+    }
+
+    const whitelistSnipe = await this.whitelistSnipe(poolSnapshot);
+
+    if (this.config.useSnipeList && !this.snipeListCache?.isInList(poolMint)) {
+      logger.debug({ mint: poolMint }, `Skipping buy because token is not in a snipe list`);
       return;
     }
 
@@ -172,6 +207,8 @@ export class Bot {
       if (this.config.autoBuyDelay > 0) {
         logger.debug({ mint: baseMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`);
         await sleep(this.config.autoBuyDelay);
+        logger.debug({ mint: poolMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
+        await sleep(this.config.autoBuyDelay); //  - (lag * 1000)
       }
     }
 
@@ -180,6 +217,7 @@ export class Bot {
     if (this.semaphore.isLocked() || numberOfActionsBeingProcessed >= this.config.maxTokensAtTheTime) {
       logger.debug(
         { mint: baseMintStr },
+        { mint: poolMint },
         `Skipping buy because max tokens to process at the same time is ${this.config.maxTokensAtTheTime} and currently ${numberOfActionsBeingProcessed} tokens is being processed`,
       );
       return;
@@ -203,12 +241,21 @@ export class Bot {
         poolKeys = createPoolKeys(accountId, raydiumState, market);
       }
 
+      const [market, mintAta] = await Promise.all([
+        this.marketStorage.get(poolSnapshot.marketId.toString()),
+        getAssociatedTokenAddress(poolSnapshot.baseMint, this.config.wallet.publicKey),
+      ]);
+      const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolSnapshot.id), poolSnapshot.state, market);
+
+      if (!whitelistSnipe) {
+        if (!this.config.useSnipeList) {
+
       if (!isPumpFun && poolKeys) {
         if (!whitelistSnipe && !this.config.useSnipeList) {
           const match = await this.filterMatch(poolKeys);
 
           if (!match) {
-            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            logger.trace({ mint: poolMint }, `Skipping buy because pool doesn't match filters`);
             return;
           }
         }
@@ -225,6 +272,11 @@ export class Bot {
             logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
             return;
           }
+        if (!buySignal) {
+          await this.messaging.sendTelegramMessage(`😭Skipping buy signal😭\n\nMint <code>${poolMint}</code>`, poolMint)
+
+          logger.trace({ mint: poolMint }, `Skipping buy because buy signal not received`);
+          return;
         }
       }
 
@@ -233,11 +285,15 @@ export class Bot {
         try {
           if (Date.now() - startTime > 10_000) {
             logger.info(`Not buying mint ${baseMintStr}, max buy 10 sec timer exceeded!`);
+
+          if ((Date.now() - startTime) > 10000) {
+            logger.info(`Not buying mint ${poolMint}, max buy 10 sec timer exceeded!`);
             return;
           }
 
           logger.info(
             { mint: baseMintStr, source },
+            { mint: poolMint },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
 
@@ -287,6 +343,7 @@ export class Bot {
             logger.info(
               {
                 mint: baseMintStr,
+                mint: poolMint,
                 signature: result.signature,
                 url: signatureUrl,
                 dex: dexUrl,
@@ -301,6 +358,7 @@ export class Bot {
               baseMintStr,
               { source: isPumpFun ? 'pumpfun' : 'raydium' },
             );
+            await this.messaging.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolMint}</code>\nSignature <code>${result.signature}</code>`, poolMint)
 
             break;
           }
@@ -308,6 +366,8 @@ export class Bot {
           logger.info(
             {
               mint: baseMintStr,
+
+              mint: poolMint,
               signature: result.signature,
               error: result.error,
               source,
@@ -320,6 +380,12 @@ export class Bot {
       }
     } catch (error) {
       logger.error({ mint: baseMintStr, error, source }, `Failed to buy token`);
+
+          logger.debug({ mint: poolMint, error }, `Error confirming buy transaction`);
+        }
+      }
+    } catch (error) {
+      logger.error({ mint: poolMint, error }, `Failed to buy token`);
     } finally {
       this.semaphore.release();
     }
@@ -337,7 +403,7 @@ export class Bot {
         return;
       }
 
-      logger.trace({ mint: rawAccount.mint }, `Processing new token...`);
+      logger.trace({ mint: rawAccount.mint.toString() }, `Processing new token...`);
 
       if (!poolData) {
         logger.trace({ mint: rawAccount.mint.toString() }, `Token pool data is not found, can't sell`);
@@ -350,6 +416,17 @@ export class Bot {
       const baseMint = isPumpFun ? pumpFunState!.mint : (poolData.state as LiquidityStateV4).baseMint;
       const baseMintStr = baseMint.toString();
 
+      if (isPumpFunPool(poolData)) {
+        const pumpFunKeys = createPumpFunPoolKeys(poolData);
+        logger.warn({ mint: pumpFunKeys.baseMint.toBase58() }, `Pump.fun sell flow not implemented yet`);
+        return;
+      }
+
+      if (!isRaydiumPool(poolData)) {
+        logger.warn({ mint: rawAccount.mint.toString() }, `Unsupported pool type for sell operation: ${poolData.type}`);
+        return;
+      }
+
       let moonshotConditionAmount = KEEP_5_PERCENT_FOR_MOONSHOTS
         ? (rawAccount.amount * BigInt(95)) / BigInt(100)
         : rawAccount.amount;
@@ -358,6 +435,8 @@ export class Bot {
         ? pumpFunState!.decimals
         : (poolData.state as LiquidityStateV4).baseDecimal.toNumber();
       const tokenIn = new Token(TOKEN_PROGRAM_ID, baseMint, tokenDecimals);
+
+      const tokenIn = new Token(TOKEN_PROGRAM_ID, poolData.baseMint, poolData.baseDecimals);
       const tokenAmountIn = new TokenAmount(tokenIn, moonshotConditionAmount, true);
 
       if (tokenAmountIn.isZero()) {
@@ -377,6 +456,13 @@ export class Bot {
         poolKeys = createPoolKeys(new PublicKey(poolData.id), poolData.state as LiquidityStateV4, market);
       }
 
+        logger.debug({ mint: rawAccount.mint.toString() }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
+        await sleep(this.config.autoSellDelay);
+      }
+
+      const market = await this.marketStorage.get(poolData.marketId.toString());
+      const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolData.id), poolData.state, market);
+
       for (let i = 0; i < this.config.maxSellRetries; i++) {
         try {
           if (!isPumpFun && i < 1 && poolKeys) {
@@ -393,6 +479,7 @@ export class Bot {
 
           logger.info(
             { mint: baseMintStr, source },
+            { mint: rawAccount.mint.toString() },
             `Send sell transaction attempt: ${i + 1}/${this.config.maxSellRetries}`,
           );
 

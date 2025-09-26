@@ -3,6 +3,13 @@ import bs58 from 'bs58';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
+import {
+  PUMPFUN_PROGRAM_ID,
+  PUMPFUN_BONDING_CURVE_ACCOUNT_SIZE,
+  decodePumpfunBondingCurve,
+  toPumpfunPoolEvent,
+  logger,
+} from '../helpers';
 
 export class Listeners extends EventEmitter {
   private subscriptions: number[] = [];
@@ -16,6 +23,7 @@ export class Listeners extends EventEmitter {
     quoteToken: Token;
     autoSell: boolean;
     cacheNewMarkets: boolean;
+    enablePumpfun: boolean;
   }) {
     if (config.cacheNewMarkets) {
       const openBookSubscription = await this.subscribeToOpenBookMarkets(config);
@@ -28,6 +36,11 @@ export class Listeners extends EventEmitter {
     if (config.autoSell) {
       const walletSubscription = await this.subscribeToWalletChanges(config);
       this.subscriptions.push(walletSubscription);
+    }
+
+    if (config.enablePumpfun) {
+      const pumpfunSubscription = await this.subscribeToPumpfunBondingCurves();
+      this.subscriptions.push(pumpfunSubscription);
     }
   }
 
@@ -97,6 +110,27 @@ export class Listeners extends EventEmitter {
             offset: 32,
             bytes: config.walletPublicKey.toBase58(),
           },
+        },
+      ],
+    );
+  }
+
+  private async subscribeToPumpfunBondingCurves() {
+    return this.connection.onProgramAccountChange(
+      PUMPFUN_PROGRAM_ID,
+      async (updatedAccountInfo) => {
+        try {
+          const state = decodePumpfunBondingCurve(updatedAccountInfo.accountInfo.data);
+          const payload = toPumpfunPoolEvent(updatedAccountInfo.accountId, state);
+          this.emit('pumpfunPool', payload);
+        } catch (error) {
+          logger.error(error, 'Failed to process pump.fun bonding curve account');
+        }
+      },
+      this.connection.commitment,
+      [
+        {
+          dataSize: PUMPFUN_BONDING_CURVE_ACCOUNT_SIZE,
         },
       ],
     );

@@ -13,25 +13,21 @@ export const PUMPFUN_BONDING_CURVE_ACCOUNT_SIZE = Number.isFinite(parsedAccountS
   ? parsedAccountSize
   : DEFAULT_ACCOUNT_SIZE;
 
-const DEFAULT_PUMPFUN_PROGRAM_ID = new PublicKey(
-  'pumpHm9GYEucU5usmTr4Wr9PXAbQGzrYAKXLfX8Lm6Yz',
-);
+const DEFAULT_PUMPFUN_PROGRAM_ID_STRING = 'pumpSn4aUAGb6nbeQC6GNxF4fA7nAMV9szbmWzxubQb';
 
 const resolvePumpfunProgramId = () => {
   const override = process.env.PUMPFUN_PROGRAM_ID?.trim();
-
-  if (!override) {
-    return DEFAULT_PUMPFUN_PROGRAM_ID;
-  }
-
+  const candidate = override || DEFAULT_PUMPFUN_PROGRAM_ID_STRING;
   try {
-    return new PublicKey(override);
+    return new PublicKey(candidate);
   } catch {
-    console.warn(
-      `Invalid PUMPFUN_PROGRAM_ID "${override}" provided. Falling back to default program id.`,
-    );
+    if (override) {
+      console.warn(
+        `Invalid PUMPFUN_PROGRAM_ID "${override}" provided. Falling back to default program id.`,
+      );
+    }
 
-    return DEFAULT_PUMPFUN_PROGRAM_ID;
+    return new PublicKey(DEFAULT_PUMPFUN_PROGRAM_ID_STRING);
   }
 };
 

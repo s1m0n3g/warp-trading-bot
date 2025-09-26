@@ -71,6 +71,7 @@ You should see the following output:
 - `MAX_SELL_RETRIES` - Maximum number of retries for selling a token.
 - `AUTO_SELL_DELAY` - Delay in milliseconds before auto-selling a token.
 - `PRICE_CHECK_INTERVAL` - Interval in milliseconds for checking the take profit and stop loss conditions.
+  - Defaults to 5 seconds so the bot can react quickly to spikes; increase it if your RPC provider enforces strict rate limits.
 - `PRICE_CHECK_DURATION` - Time in milliseconds to wait for stop loss/take profit conditions.
   - If greater than zero the bot will stop checking after this time.
   - Set to `0` to keep monitoring prices indefinitely without auto-selling.
@@ -97,6 +98,8 @@ Note: When using snipe list filters below will be disabled.
 
 #### Filters
 
+- Defaults aim to let the bot enter very young pools: only the burn check is active and the holder/distribution filters are disabled.
+  - Enable the additional checks below when you prefer higher safety over speed; they will significantly reduce how many pools pass the filters.
 - `FILTER_CHECK_INTERVAL` - Interval in milliseconds for checking if pool match the filters.
   - Set to zero to disable filters.
 - `FILTER_CHECK_DURATION` - Time in milliseconds to wait for pool to match the filters.
@@ -120,6 +123,7 @@ Note: When using snipe list filters below will be disabled.
 
 #### Holders
 
+- Disabled by default to avoid blocking newborn pools; enable them when you prefer stricter vetting.
 - Check out .env.copy for variables. I took it from some dude on discord and it works great! Hah
 - Top holders are poor means: 1 SOL in lamports in more than 50% of wallets of top holders.
 - Pool wallet is not top wallet in holders means: Usually when tokens are sooo young, raydium must be top wallet, otherwise it's generally preminted.

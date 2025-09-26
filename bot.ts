@@ -15,21 +15,21 @@ import {
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import { Liquidity, LiquidityPoolKeysV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { MarketCache, PoolCache, PoolSnapshot, RaydiumPoolSnapshot, SnipeListCache, isPumpFunPool, isRaydiumPool } from './cache';
-import { PoolFilters } from './filters';
 import {
-  TransactionExecutor,
-  buildPumpFunBuyTransaction,
-  buildPumpFunSellTransaction,
-  PumpFunBondingCurveState,
-  isPumpFunPoolState,
-} from './transactions';
-import { createPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
+  MarketCache,
+  PoolCache,
+  PoolSnapshot,
+  RaydiumPoolSnapshot,
+  SnipeListCache,
+  isPumpFunPool,
+  isRaydiumPool,
+} from './cache';
+import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
-import { createPoolKeys, createPumpFunPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
 import {
   PumpfunPoolEventPayload,
   createPoolKeys,
+  createPumpFunPoolKeys,
   KEEP_5_PERCENT_FOR_MOONSHOTS,
   logger,
   NETWORK,
@@ -93,8 +93,8 @@ export interface BotConfig {
 
 export class Bot {
   private readonly snipeListCache?: SnipeListCache;
-  private readonly blacklistCache?: BlacklistCache;
-  private readonly whitelistCache?: WhitelistCache;
+  private readonly blacklistCache: BlacklistCache;
+  private readonly whitelistCache: WhitelistCache;
 
   private readonly semaphore: Semaphore;
   private sellExecutionCount = 0;
@@ -136,7 +136,7 @@ export class Bot {
     logger.trace('Received pump.fun pool update');
   }
 
-  async validate() {
+  async validate(): Promise<boolean> {
     try {
       await getAccount(this.connection, this.config.quoteAta, this.connection.commitment);
     } catch (error) {
@@ -157,28 +157,11 @@ export class Bot {
     const market = await this.marketStorage.get(pool.marketId.toString());
     const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(pool.id), pool.state, market);
 
-    //updateAuthority is whitelisted
+    // updateAuthority is whitelisted
     return await this.whitelistCache.isInList(this.connection, poolKeys);
   }
 
-  public async buy(
-    accountId: PublicKey,
-    poolState: LiquidityStateV4 | PumpFunBondingCurveState,
-    lag: number = 0,
-  ) {
-    const isPumpFun = isPumpFunPoolState(poolState);
-    const baseMint = isPumpFun ? poolState.mint : (poolState as LiquidityStateV4).baseMint;
-    const baseMintStr = baseMint.toString();
-    const source = isPumpFun ? 'pumpfun' : 'raydium';
-
-    logger.trace({ mint: baseMint }, `Processing new pool...`);
-
-    const whitelistSnipe = isPumpFun ? false : await this.whitelistSnipe(accountId, poolState as LiquidityStateV4);
-
-    if (this.config.useSnipeList && !this.snipeListCache?.isInList(baseMintStr)) {
-      logger.debug({ mint: baseMintStr }, `Skipping buy because token is not in a snipe list`);
-
-  public async buy(pool: PoolSnapshot, lag: number = 0) {
+  public async buy(pool: PoolSnapshot, lag: number = 0): Promise<void> {
     const cachedPool = await this.poolStorage.get(pool.baseMint.toBase58());
     const poolSnapshot = cachedPool ?? pool;
     const poolMint = poolSnapshot.baseMint.toBase58();
@@ -203,20 +186,19 @@ export class Bot {
       return;
     }
 
-    if (!whitelistSnipe) {
-      if (this.config.autoBuyDelay > 0) {
-        logger.debug({ mint: baseMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`);
-        await sleep(this.config.autoBuyDelay);
-        logger.debug({ mint: poolMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
-        await sleep(this.config.autoBuyDelay); //  - (lag * 1000)
+    if (!whitelistSnipe && this.config.autoBuyDelay > 0) {
+      const waitTime = Math.max(this.config.autoBuyDelay - lag * 1000, 0);
+      if (waitTime > 0) {
+        logger.debug({ mint: poolMint }, `Waiting for ${waitTime} ms before buy`);
+        await sleep(waitTime);
       }
     }
 
     const numberOfActionsBeingProcessed =
       this.config.maxTokensAtTheTime - this.semaphore.getValue() + this.sellExecutionCount;
+
     if (this.semaphore.isLocked() || numberOfActionsBeingProcessed >= this.config.maxTokensAtTheTime) {
       logger.debug(
-        { mint: baseMintStr },
         { mint: poolMint },
         `Skipping buy because max tokens to process at the same time is ${this.config.maxTokensAtTheTime} and currently ${numberOfActionsBeingProcessed} tokens is being processed`,
       );
@@ -226,54 +208,29 @@ export class Bot {
     await this.semaphore.acquire();
 
     try {
-      let mintAta: PublicKey;
-      let poolKeys: LiquidityPoolKeysV4 | undefined;
-
-      if (isPumpFun) {
-        mintAta = await getAssociatedTokenAddress(baseMint, this.config.wallet.publicKey);
-      } else {
-        const raydiumState = poolState as LiquidityStateV4;
-        const [market, derivedMintAta] = await Promise.all([
-          this.marketStorage.get(raydiumState.marketId.toString()),
-          getAssociatedTokenAddress(raydiumState.baseMint, this.config.wallet.publicKey),
-        ]);
-        mintAta = derivedMintAta;
-        poolKeys = createPoolKeys(accountId, raydiumState, market);
-      }
-
       const [market, mintAta] = await Promise.all([
         this.marketStorage.get(poolSnapshot.marketId.toString()),
         getAssociatedTokenAddress(poolSnapshot.baseMint, this.config.wallet.publicKey),
       ]);
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolSnapshot.id), poolSnapshot.state, market);
 
-      if (!whitelistSnipe) {
-        if (!this.config.useSnipeList) {
+      if (!whitelistSnipe && !this.config.useSnipeList) {
+        const match = await this.filterMatch(poolKeys);
 
-      if (!isPumpFun && poolKeys) {
-        if (!whitelistSnipe && !this.config.useSnipeList) {
-          const match = await this.filterMatch(poolKeys);
-
-          if (!match) {
-            logger.trace({ mint: poolMint }, `Skipping buy because pool doesn't match filters`);
-            return;
-          }
+        if (!match) {
+          logger.trace({ mint: poolMint }, `Skipping buy because pool doesn't match filters`);
+          return;
         }
+      }
 
-        if (!whitelistSnipe) {
-          const buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
+      if (!whitelistSnipe) {
+        const buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
 
-          if (!buySignal) {
-            await this.messaging.sendTelegramMessage(
-              `😭Skipping buy signal😭\n\nMint <code>${poolKeys.baseMint.toString()}</code>`,
-              baseMintStr,
-            );
-
-            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
-            return;
-          }
         if (!buySignal) {
-          await this.messaging.sendTelegramMessage(`😭Skipping buy signal😭\n\nMint <code>${poolMint}</code>`, poolMint)
+          await this.messaging.sendTelegramMessage(
+            `😭Skipping buy signal😭\n\nMint <code>${poolMint}</code>`,
+            poolMint,
+          );
 
           logger.trace({ mint: poolMint }, `Skipping buy because buy signal not received`);
           return;
@@ -284,103 +241,60 @@ export class Bot {
       for (let i = 0; i < this.config.maxBuyRetries; i++) {
         try {
           if (Date.now() - startTime > 10_000) {
-            logger.info(`Not buying mint ${baseMintStr}, max buy 10 sec timer exceeded!`);
-
-          if ((Date.now() - startTime) > 10000) {
             logger.info(`Not buying mint ${poolMint}, max buy 10 sec timer exceeded!`);
             return;
           }
 
           logger.info(
-            { mint: baseMintStr, source },
             { mint: poolMint },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
 
-          let result: Awaited<ReturnType<TransactionExecutor['executeAndConfirm']>>;
-
-          if (isPumpFun) {
-            const amountLamports = BigInt(this.config.quoteAmount.raw.toString());
-            const includeComputeBudget = !(this.isWarp || this.isJito);
-            const built = await buildPumpFunBuyTransaction({
-              connection: this.connection,
-              wallet: this.config.wallet,
-              pool: poolState as PumpFunBondingCurveState,
-              userTokenAccount: mintAta,
-              amountLamports,
-              slippage: this.config.buySlippage,
-              includeComputeBudget,
-              computeUnitLimit: this.config.unitLimit,
-              computeUnitPrice: this.config.unitPrice,
-            });
-
-            result = await this.txExecutor.executeAndConfirm(
-              built.transaction,
-              this.config.wallet,
-              built.latestBlockhash,
-            );
-          } else {
-            const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys!.baseMint, poolKeys!.baseDecimals);
-            result = await this.swap(
-              poolKeys!,
-              this.config.quoteAta,
-              mintAta,
-              this.config.quoteToken,
-              tokenOut,
-              this.config.quoteAmount,
-              this.config.buySlippage,
-              this.config.wallet,
-              'buy',
-            );
-          }
+          const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
+          const result = await this.swap(
+            poolKeys,
+            this.config.quoteAta,
+            mintAta,
+            this.config.quoteToken,
+            tokenOut,
+            this.config.quoteAmount,
+            this.config.buySlippage,
+            this.config.wallet,
+            'buy',
+          );
 
           if (result.confirmed) {
             const signatureUrl = `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`;
-            const dexUrl = isPumpFun
-              ? `https://pump.fun/coin/${baseMintStr}`
-              : `https://dexscreener.com/solana/${baseMintStr}?maker=${this.config.wallet.publicKey}`;
+            const dexUrl = `https://dexscreener.com/solana/${poolMint}?maker=${this.config.wallet.publicKey}`;
 
             logger.info(
               {
-                mint: baseMintStr,
                 mint: poolMint,
                 signature: result.signature,
                 url: signatureUrl,
                 dex: dexUrl,
-                source,
               },
               `Confirmed buy tx`,
             );
 
-            const sourceLabel = isPumpFun ? 'pump.fun' : 'Raydium';
             await this.messaging.sendTelegramMessage(
-              `💚Confirmed ${sourceLabel} buy💚\n\nMint <code>${baseMintStr}</code>\nSignature <code>${result.signature}</code>`,
-              baseMintStr,
-              { source: isPumpFun ? 'pumpfun' : 'raydium' },
+              `💚Confirmed buy💚\n\nMint <code>${poolMint}</code>\nSignature <code>${result.signature}</code>`,
+              poolMint,
+              { source: 'raydium' },
             );
-            await this.messaging.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolMint}</code>\nSignature <code>${result.signature}</code>`, poolMint)
 
             break;
           }
 
           logger.info(
             {
-              mint: baseMintStr,
-
               mint: poolMint,
               signature: result.signature,
               error: result.error,
-              source,
             },
             `Error confirming buy tx`,
           );
         } catch (error) {
-          logger.debug({ mint: baseMintStr, error, source }, `Error confirming buy transaction`);
-        }
-      }
-    } catch (error) {
-      logger.error({ mint: baseMintStr, error, source }, `Failed to buy token`);
-
           logger.debug({ mint: poolMint, error }, `Error confirming buy transaction`);
         }
       }
@@ -391,10 +305,10 @@ export class Bot {
     }
   }
 
-  public async sell(accountId: PublicKey, rawAccount: RawAccount) {
+  public async sell(accountId: PublicKey, rawAccount: RawAccount): Promise<void> {
     this.sellExecutionCount++;
 
-    let source: 'pumpfun' | 'raydium' = 'raydium';
+    const source: 'raydium' = 'raydium';
 
     try {
       const poolData = await this.poolStorage.get(rawAccount.mint.toString());
@@ -410,12 +324,6 @@ export class Bot {
         return;
       }
 
-      const isPumpFun = poolData.type === 'pumpfun';
-      source = isPumpFun ? 'pumpfun' : 'raydium';
-      const pumpFunState = isPumpFun ? (poolData.state as PumpFunBondingCurveState) : undefined;
-      const baseMint = isPumpFun ? pumpFunState!.mint : (poolData.state as LiquidityStateV4).baseMint;
-      const baseMintStr = baseMint.toString();
-
       if (isPumpFunPool(poolData)) {
         const pumpFunKeys = createPumpFunPoolKeys(poolData);
         logger.warn({ mint: pumpFunKeys.baseMint.toBase58() }, `Pump.fun sell flow not implemented yet`);
@@ -427,36 +335,22 @@ export class Bot {
         return;
       }
 
+      const poolMint = poolData.baseMint.toBase58();
+
       let moonshotConditionAmount = KEEP_5_PERCENT_FOR_MOONSHOTS
         ? (rawAccount.amount * BigInt(95)) / BigInt(100)
         : rawAccount.amount;
-
-      const tokenDecimals = isPumpFun
-        ? pumpFunState!.decimals
-        : (poolData.state as LiquidityStateV4).baseDecimal.toNumber();
-      const tokenIn = new Token(TOKEN_PROGRAM_ID, baseMint, tokenDecimals);
 
       const tokenIn = new Token(TOKEN_PROGRAM_ID, poolData.baseMint, poolData.baseDecimals);
       const tokenAmountIn = new TokenAmount(tokenIn, moonshotConditionAmount, true);
 
       if (tokenAmountIn.isZero()) {
-        logger.info({ mint: baseMintStr, source }, `Empty balance, can't sell`);
+        logger.info({ mint: poolMint, source }, `Empty balance, can't sell`);
         return;
       }
 
       if (this.config.autoSellDelay > 0) {
-        logger.debug({ mint: baseMintStr }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
-        await sleep(this.config.autoSellDelay);
-      }
-
-      let poolKeys: LiquidityPoolKeysV4 | undefined;
-
-      if (!isPumpFun) {
-        const market = await this.marketStorage.get((poolData.state as LiquidityStateV4).marketId.toString());
-        poolKeys = createPoolKeys(new PublicKey(poolData.id), poolData.state as LiquidityStateV4, market);
-      }
-
-        logger.debug({ mint: rawAccount.mint.toString() }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
+        logger.debug({ mint: poolMint }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
         await sleep(this.config.autoSellDelay);
       }
 
@@ -465,7 +359,7 @@ export class Bot {
 
       for (let i = 0; i < this.config.maxSellRetries; i++) {
         try {
-          if (!isPumpFun && i < 1 && poolKeys) {
+          if (i === 0) {
             const shouldSell = await this.tradeSignals.waitForSellSignal(tokenAmountIn, poolKeys);
 
             if (!shouldSell) {
@@ -474,61 +368,39 @@ export class Bot {
           }
 
           if (KEEP_5_PERCENT_FOR_MOONSHOTS) {
-            this.poolStorage.markAsSold(rawAccount.mint.toString());
+            await this.poolStorage.markAsSold(rawAccount.mint.toString());
           }
 
           logger.info(
-            { mint: baseMintStr, source },
-            { mint: rawAccount.mint.toString() },
+            { mint: poolMint, source },
             `Send sell transaction attempt: ${i + 1}/${this.config.maxSellRetries}`,
           );
 
-          let result: Awaited<ReturnType<TransactionExecutor['executeAndConfirm']>>;
-
-          if (isPumpFun) {
-            const includeComputeBudget = !(this.isWarp || this.isJito);
-            const built = await buildPumpFunSellTransaction({
-              connection: this.connection,
-              wallet: this.config.wallet,
-              pool: pumpFunState!,
-              userTokenAccount: accountId,
-              tokenAmount: moonshotConditionAmount,
-              slippage: this.config.sellSlippage,
-              includeComputeBudget,
-              computeUnitLimit: this.config.unitLimit,
-              computeUnitPrice: this.config.unitPrice,
-              closeTokenAccount: !KEEP_5_PERCENT_FOR_MOONSHOTS,
-            });
-
-            result = await this.txExecutor.executeAndConfirm(
-              built.transaction,
-              this.config.wallet,
-              built.latestBlockhash,
-            );
-          } else {
-            result = await this.swap(
-              poolKeys!,
-              accountId,
-              this.config.quoteAta,
-              tokenIn,
-              this.config.quoteToken,
-              tokenAmountIn,
-              this.config.sellSlippage,
-              this.config.wallet,
-              'sell',
-            );
-          }
+          const result = await this.swap(
+            poolKeys,
+            accountId,
+            this.config.quoteAta,
+            tokenIn,
+            this.config.quoteToken,
+            tokenAmountIn,
+            this.config.sellSlippage,
+            this.config.wallet,
+            'sell',
+          );
 
           if (result.confirmed) {
             try {
               this.connection
-                .getParsedTransaction(result.signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 })
+                .getParsedTransaction(result.signature, {
+                  commitment: 'confirmed',
+                  maxSupportedTransactionVersion: 0,
+                })
                 .then(async (parsedConfirmedTransaction) => {
                   if (parsedConfirmedTransaction) {
-                    let preTokenBalances = parsedConfirmedTransaction.meta.preTokenBalances;
-                    let postTokenBalances = parsedConfirmedTransaction.meta.postTokenBalances;
+                    const preTokenBalances = parsedConfirmedTransaction.meta.preTokenBalances;
+                    const postTokenBalances = parsedConfirmedTransaction.meta.postTokenBalances;
 
-                    let pre = preTokenBalances
+                    const pre = preTokenBalances
                       .filter(
                         (x) =>
                           x.mint === this.config.quoteToken.mint.toString() &&
@@ -537,7 +409,7 @@ export class Bot {
                       .map((x) => x.uiTokenAmount.uiAmount)
                       .reduce((a, b) => a + b, 0);
 
-                    let post = postTokenBalances
+                    const post = postTokenBalances
                       .filter(
                         (x) =>
                           x.mint === this.config.quoteToken.mint.toString() &&
@@ -546,13 +418,12 @@ export class Bot {
                       .map((x) => x.uiTokenAmount.uiAmount)
                       .reduce((a, b) => a + b, 0);
 
-                    let quoteAmountNumber = parseFloat(this.config.quoteAmount.toFixed());
-                    let profitOrLoss = post - pre - quoteAmountNumber;
-                    let percentageChange = (profitOrLoss / quoteAmountNumber) * 100;
+                    const quoteAmountNumber = parseFloat(this.config.quoteAmount.toFixed());
+                    const profitOrLoss = post - pre - quoteAmountNumber;
+                    const percentageChange = (profitOrLoss / quoteAmountNumber) * 100;
 
-                    const saleSourceLabel = source === 'pumpfun' ? 'pump.fun' : 'Raydium';
                     await this.messaging.sendTelegramMessage(
-                      `⭕Confirmed ${saleSourceLabel} sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${
+                      `⭕Confirmed Raydium sale at <b>${(post - pre).toFixed(5)}</b>⭕\n\n${
                         profitOrLoss < 0 ? '🔴Loss ' : '🟢Profit '
                       }<code>${profitOrLoss.toFixed(5)} ${this.config.quoteToken.symbol} (${percentageChange.toFixed(
                         2,
@@ -563,16 +434,14 @@ export class Bot {
                   }
                 })
                 .catch((error) => {
-                  console.log('Error fetching transaction details:', error);
+                  logger.error({ mint: poolMint, error }, 'Error fetching transaction details');
                 });
             } catch (error) {
-              console.log('Error calculating profit', error);
+              logger.error({ mint: poolMint, error }, 'Error calculating profit');
             }
 
             const signatureUrl = `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`;
-            const dexUrl = isPumpFun
-              ? `https://pump.fun/coin/${baseMintStr}`
-              : `https://dexscreener.com/solana/${rawAccount.mint.toString()}?maker=${this.config.wallet.publicKey}`;
+            const dexUrl = `https://dexscreener.com/solana/${rawAccount.mint.toString()}?maker=${this.config.wallet.publicKey}`;
 
             logger.info(
               {
@@ -607,7 +476,6 @@ export class Bot {
     }
   }
 
-  // noinspection JSUnusedLocalSymbols
   private async swap(
     poolKeys: LiquidityPoolKeysV4,
     ataIn: PublicKey,
@@ -655,22 +523,23 @@ export class Bot {
         ...(this.isWarp || this.isJito
           ? []
           : [
-            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
-            ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
-          ]),
+              ComputeBudgetProgram.setComputeUnitPrice({ microLamports: this.config.unitPrice }),
+              ComputeBudgetProgram.setComputeUnitLimit({ units: this.config.unitLimit }),
+            ]),
         ...(direction === 'buy'
           ? [
-            createAssociatedTokenAccountIdempotentInstruction(
-              wallet.publicKey,
-              ataOut,
-              wallet.publicKey,
-              tokenOut.mint,
-            ),
-          ]
+              createAssociatedTokenAccountIdempotentInstruction(
+                wallet.publicKey,
+                ataOut,
+                wallet.publicKey,
+                tokenOut.mint,
+              ),
+            ]
           : []),
         ...innerTransaction.instructions,
-        // Close the account if we are selling and not keeping 5% for moonshots
-        ...((direction === 'sell' && !KEEP_5_PERCENT_FOR_MOONSHOTS) ? [createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey)] : []),
+        ...(direction === 'sell' && !KEEP_5_PERCENT_FOR_MOONSHOTS
+          ? [createCloseAccountInstruction(ataIn, wallet.publicKey, wallet.publicKey)]
+          : []),
       ],
     }).compileToV0Message();
 
@@ -685,11 +554,15 @@ export class Bot {
       return true;
     }
 
-    const filters = new PoolFilters(this.connection, {
-      quoteToken: this.config.quoteToken,
-      minPoolSize: this.config.minPoolSize,
-      maxPoolSize: this.config.maxPoolSize,
-    }, this.blacklistCache);
+    const filters = new PoolFilters(
+      this.connection,
+      {
+        quoteToken: this.config.quoteToken,
+        minPoolSize: this.config.minPoolSize,
+        maxPoolSize: this.config.maxPoolSize,
+      },
+      this.blacklistCache,
+    );
 
     const timesToCheck = this.config.filterCheckDuration / this.config.filterCheckInterval;
     let timesChecked = 0;
@@ -714,7 +587,12 @@ export class Bot {
         }
 
         if (this.config.filterCheckInterval > 1) {
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${this.config.filterCheckInterval / 1000} sec.`);
+          logger.trace(
+            { mint: poolKeys.baseMint.toString() },
+            `${timesChecked + 1}/${timesToCheck} Filter didn't match, waiting for ${
+              this.config.filterCheckInterval / 1000
+            } sec.`,
+          );
         }
         await sleep(this.config.filterCheckInterval);
       } finally {

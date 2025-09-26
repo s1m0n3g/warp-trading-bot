@@ -13,11 +13,29 @@ export const PUMPFUN_BONDING_CURVE_ACCOUNT_SIZE = Number.isFinite(parsedAccountS
   ? parsedAccountSize
   : DEFAULT_ACCOUNT_SIZE;
 
-const DEFAULT_PUMPFUN_PROGRAM_ID = 'pumpHm9GYEucU5usmTr4Wr9PXAbQGzrYAKXLfX8Lm6Yz';
-
-export const PUMPFUN_PROGRAM_ID = new PublicKey(
-  process.env.PUMPFUN_PROGRAM_ID ?? DEFAULT_PUMPFUN_PROGRAM_ID,
+const DEFAULT_PUMPFUN_PROGRAM_ID = new PublicKey(
+  'pumpHm9GYEucU5usmTr4Wr9PXAbQGzrYAKXLfX8Lm6Yz',
 );
+
+const resolvePumpfunProgramId = () => {
+  const override = process.env.PUMPFUN_PROGRAM_ID?.trim();
+
+  if (!override) {
+    return DEFAULT_PUMPFUN_PROGRAM_ID;
+  }
+
+  try {
+    return new PublicKey(override);
+  } catch {
+    console.warn(
+      `Invalid PUMPFUN_PROGRAM_ID "${override}" provided. Falling back to default program id.`,
+    );
+
+    return DEFAULT_PUMPFUN_PROGRAM_ID;
+  }
+};
+
+export const PUMPFUN_PROGRAM_ID = resolvePumpfunProgramId();
 
 export interface PumpfunBondingCurveState {
   authority: PublicKey;

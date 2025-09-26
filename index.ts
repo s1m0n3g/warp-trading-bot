@@ -283,6 +283,9 @@ const runListener = async () => {
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+    if (poolState.status.toNumber && poolState.status.toNumber() !== 6) {
+      return;
+    }
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
     const exists = await poolCache.get(poolState.baseMint.toString());
 

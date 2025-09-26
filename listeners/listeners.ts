@@ -1,5 +1,4 @@
 import { LIQUIDITY_STATE_LAYOUT_V4, MAINNET_PROGRAM_ID, MARKET_STATE_LAYOUT_V3, Token } from '@raydium-io/raydium-sdk';
-import bs58 from 'bs58';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { EventEmitter } from 'events';
@@ -82,12 +81,6 @@ export class Listeners extends EventEmitter {
           memcmp: {
             offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('marketProgramId'),
             bytes: MAINNET_PROGRAM_ID.OPENBOOK_MARKET.toBase58(),
-          },
-        },
-        {
-          memcmp: {
-            offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('status'),
-            bytes: bs58.encode([6, 0, 0, 0, 0, 0, 0, 0]),
           },
         },
       ],

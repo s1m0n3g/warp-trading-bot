@@ -35,6 +35,7 @@ export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
 export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
 export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
+export const ENABLE_PUMPFUN = (process.env.ENABLE_PUMPFUN ?? 'false') === 'true';
 
 // Buy
 export const AUTO_BUY_DELAY = Number(retrieveEnvVariable('AUTO_BUY_DELAY', logger));

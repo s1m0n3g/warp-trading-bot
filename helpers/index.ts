@@ -7,3 +7,4 @@ export * from './wallet';
 export * from './promises';
 export * from './pumpfun/keys';
 export * from './pumpfun/types';
+export * from './pumpfun';

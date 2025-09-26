@@ -65,8 +65,10 @@ import {
   BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
   BUY_SIGNAL_LOW_VOLUME_THRESHOLD,
   USE_TELEGRAM,
-  USE_TA
+  USE_TA,
+  ENABLE_PUMPFUN,
 } from './helpers';
+import type { PumpfunPoolEventPayload } from './helpers';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
 import { TechnicalAnalysisCache } from './cache/technical-analysis.cache';
@@ -114,6 +116,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
+  logger.info(`Pump.fun listener enabled: ${botConfig.enablePumpfun}`);
   logger.info(`Telegram notifications: ${botConfig.useTelegram}`);
 
   if (botConfig.useTelegram) {
@@ -247,7 +250,8 @@ const runListener = async () => {
     buySignalFractionPercentageTimeToWait: BUY_SIGNAL_FRACTION_TIME_TO_WAIT,
     buySignalLowVolumeThreshold: BUY_SIGNAL_LOW_VOLUME_THRESHOLD,
     useTelegram: USE_TELEGRAM,
-    useTechnicalAnalysis: USE_TA
+    useTechnicalAnalysis: USE_TA,
+    enablePumpfun: ENABLE_PUMPFUN,
   };
 
   const bot = new Bot(connection, marketCache, poolCache, txExecutor, technicalAnalysisCache, botConfig);
@@ -269,6 +273,7 @@ const runListener = async () => {
     quoteToken,
     autoSell: AUTO_SELL,
     cacheNewMarkets: CACHE_NEW_MARKETS,
+    enablePumpfun: ENABLE_PUMPFUN,
   });
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
@@ -307,8 +312,13 @@ const runListener = async () => {
     await bot.sell(updatedAccountInfo.accountId, accountData);
   });
 
+  if (ENABLE_PUMPFUN) {
+    listeners.on('pumpfunPool', async (payload: PumpfunPoolEventPayload) => {
+      await bot.handlePumpfunPool(payload);
+    });
+  }
+
   printDetails(wallet, quoteToken, bot);
 };
 
 runListener();
-

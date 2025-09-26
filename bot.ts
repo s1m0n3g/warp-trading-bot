@@ -14,11 +14,11 @@ import {
   RawAccount,
   TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
-import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { MarketCache, PoolCache, SnipeListCache } from './cache';
+import { Liquidity, LiquidityPoolKeysV4, Percent, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import { MarketCache, PoolCache, PoolSnapshot, RaydiumPoolSnapshot, SnipeListCache, isPumpFunPool, isRaydiumPool } from './cache';
 import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
-import { createPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
+import { createPoolKeys, createPumpFunPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
 import { Semaphore } from 'async-mutex';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
@@ -128,34 +128,46 @@ export class Bot {
     return true;
   }
 
-  public async whitelistSnipe(accountId: PublicKey, poolState: LiquidityStateV4): Promise<boolean> {
+  public async whitelistSnipe(pool: RaydiumPoolSnapshot): Promise<boolean> {
     if (this.whitelistCache.whitelistIsEmpty()) {
       return false;
     }
 
-    const [market] = await Promise.all([
-      this.marketStorage.get(poolState.marketId.toString()),
-      getAssociatedTokenAddress(poolState.baseMint, this.config.wallet.publicKey),
-    ]);
-    const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
+    const market = await this.marketStorage.get(pool.marketId.toString());
+    const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(pool.id), pool.state, market);
 
     //updateAuthority is whitelisted
     return await this.whitelistCache.isInList(this.connection, poolKeys);
   }
 
-  public async buy(accountId: PublicKey, poolState: LiquidityStateV4, lag: number = 0) {
-    logger.trace({ mint: poolState.baseMint }, `Processing new pool...`);
+  public async buy(pool: PoolSnapshot, lag: number = 0) {
+    const cachedPool = await this.poolStorage.get(pool.baseMint.toBase58());
+    const poolSnapshot = cachedPool ?? pool;
+    const poolMint = poolSnapshot.baseMint.toBase58();
 
-    const whitelistSnipe = await this.whitelistSnipe(accountId, poolState);
+    logger.trace({ mint: poolMint }, `Processing new pool...`);
 
-    if (this.config.useSnipeList && !this.snipeListCache?.isInList(poolState.baseMint.toString())) {
-      logger.debug({ mint: poolState.baseMint.toString() }, `Skipping buy because token is not in a snipe list`);
+    if (isPumpFunPool(poolSnapshot)) {
+      const pumpFunKeys = createPumpFunPoolKeys(poolSnapshot);
+      logger.warn({ mint: pumpFunKeys.baseMint.toBase58() }, `Pump.fun buy flow not implemented yet`);
+      return;
+    }
+
+    if (!isRaydiumPool(poolSnapshot)) {
+      logger.warn({ mint: poolMint }, `Unsupported pool type for buy operation: ${poolSnapshot.type}`);
+      return;
+    }
+
+    const whitelistSnipe = await this.whitelistSnipe(poolSnapshot);
+
+    if (this.config.useSnipeList && !this.snipeListCache?.isInList(poolMint)) {
+      logger.debug({ mint: poolMint }, `Skipping buy because token is not in a snipe list`);
       return;
     }
 
     if (!whitelistSnipe) {
       if (this.config.autoBuyDelay > 0) {
-        logger.debug({ mint: poolState.baseMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
+        logger.debug({ mint: poolMint }, `Waiting for ${this.config.autoBuyDelay} ms before buy`); //  - (lag * 1000)
         await sleep(this.config.autoBuyDelay); //  - (lag * 1000)
       }
     }
@@ -166,7 +178,7 @@ export class Bot {
       this.config.maxTokensAtTheTime - this.semaphore.getValue() + this.sellExecutionCount;
     if (this.semaphore.isLocked() || numberOfActionsBeingProcessed >= this.config.maxTokensAtTheTime) {
       logger.debug(
-        { mint: poolState.baseMint.toString() },
+        { mint: poolMint },
         `Skipping buy because max tokens to process at the same time is ${this.config.maxTokensAtTheTime} and currently ${numberOfActionsBeingProcessed} tokens is being processed`,
       );
       return;
@@ -176,10 +188,10 @@ export class Bot {
 
     try {
       const [market, mintAta] = await Promise.all([
-        this.marketStorage.get(poolState.marketId.toString()),
-        getAssociatedTokenAddress(poolState.baseMint, this.config.wallet.publicKey),
+        this.marketStorage.get(poolSnapshot.marketId.toString()),
+        getAssociatedTokenAddress(poolSnapshot.baseMint, this.config.wallet.publicKey),
       ]);
-      const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(accountId, poolState, market);
+      const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolSnapshot.id), poolSnapshot.state, market);
 
       if (!whitelistSnipe) {
         if (!this.config.useSnipeList) {
@@ -187,7 +199,7 @@ export class Bot {
           const match = await this.filterMatch(poolKeys);
 
           if (!match) {
-            logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because pool doesn't match filters`);
+            logger.trace({ mint: poolMint }, `Skipping buy because pool doesn't match filters`);
             return;
           }
         }
@@ -195,9 +207,9 @@ export class Bot {
         let buySignal = await this.tradeSignals.waitForBuySignal(poolKeys);
 
         if (!buySignal) {
-          await this.messaging.sendTelegramMessage(`😭Skipping buy signal😭\n\nMint <code>${poolKeys.baseMint.toString()}</code>`, poolState.baseMint.toString())
+          await this.messaging.sendTelegramMessage(`😭Skipping buy signal😭\n\nMint <code>${poolMint}</code>`, poolMint)
 
-          logger.trace({ mint: poolKeys.baseMint.toString() }, `Skipping buy because buy signal not received`);
+          logger.trace({ mint: poolMint }, `Skipping buy because buy signal not received`);
           return;
         }
       }
@@ -207,12 +219,12 @@ export class Bot {
         try {
 
           if ((Date.now() - startTime) > 10000) {
-            logger.info(`Not buying mint ${poolState.baseMint.toString()}, max buy 10 sec timer exceeded!`);
+            logger.info(`Not buying mint ${poolMint}, max buy 10 sec timer exceeded!`);
             return;
           }
 
           logger.info(
-            { mint: poolState.baseMint.toString() },
+            { mint: poolMint },
             `Send buy transaction attempt: ${i + 1}/${this.config.maxBuyRetries}`,
           );
           const tokenOut = new Token(TOKEN_PROGRAM_ID, poolKeys.baseMint, poolKeys.baseDecimals);
@@ -231,32 +243,32 @@ export class Bot {
           if (result.confirmed) {
             logger.info(
               {
-                mint: poolState.baseMint.toString(),
+                mint: poolMint,
                 signature: result.signature,
                 url: `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`,
               },
               `Confirmed buy tx`,
             );
 
-            await this.messaging.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nSignature <code>${result.signature}</code>`, poolState.baseMint.toString())
+            await this.messaging.sendTelegramMessage(`💚Confirmed buy💚\n\nMint <code>${poolMint}</code>\nSignature <code>${result.signature}</code>`, poolMint)
 
             break;
           }
 
           logger.info(
             {
-              mint: poolState.baseMint.toString(),
+              mint: poolMint,
               signature: result.signature,
               error: result.error,
             },
             `Error confirming buy tx`,
           );
         } catch (error) {
-          logger.debug({ mint: poolState.baseMint.toString(), error }, `Error confirming buy transaction`);
+          logger.debug({ mint: poolMint, error }, `Error confirming buy transaction`);
         }
       }
     } catch (error) {
-      logger.error({ mint: poolState.baseMint.toString(), error }, `Failed to buy token`);
+      logger.error({ mint: poolMint, error }, `Failed to buy token`);
     } finally {
       this.semaphore.release();
     }
@@ -272,17 +284,27 @@ export class Bot {
         return;
       }
 
-      logger.trace({ mint: rawAccount.mint }, `Processing new token...`);
+      logger.trace({ mint: rawAccount.mint.toString() }, `Processing new token...`);
 
       if (!poolData) {
         logger.trace({ mint: rawAccount.mint.toString() }, `Token pool data is not found, can't sell`);
         return;
       }
 
+      if (isPumpFunPool(poolData)) {
+        const pumpFunKeys = createPumpFunPoolKeys(poolData);
+        logger.warn({ mint: pumpFunKeys.baseMint.toBase58() }, `Pump.fun sell flow not implemented yet`);
+        return;
+      }
+
+      if (!isRaydiumPool(poolData)) {
+        logger.warn({ mint: rawAccount.mint.toString() }, `Unsupported pool type for sell operation: ${poolData.type}`);
+        return;
+      }
 
       let moonshotConditionAmount = KEEP_5_PERCENT_FOR_MOONSHOTS ? (rawAccount.amount * BigInt(95)) / BigInt(100) : rawAccount.amount;
 
-      const tokenIn = new Token(TOKEN_PROGRAM_ID, poolData.state.baseMint, poolData.state.baseDecimal.toNumber());
+      const tokenIn = new Token(TOKEN_PROGRAM_ID, poolData.baseMint, poolData.baseDecimals);
       const tokenAmountIn = new TokenAmount(tokenIn, moonshotConditionAmount, true);
 
       if (tokenAmountIn.isZero()) {
@@ -291,11 +313,11 @@ export class Bot {
       }
 
       if (this.config.autoSellDelay > 0) {
-        logger.debug({ mint: rawAccount.mint }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
+        logger.debug({ mint: rawAccount.mint.toString() }, `Waiting for ${this.config.autoSellDelay} ms before sell`);
         await sleep(this.config.autoSellDelay);
       }
 
-      const market = await this.marketStorage.get(poolData.state.marketId.toString());
+      const market = await this.marketStorage.get(poolData.marketId.toString());
       const poolKeys: LiquidityPoolKeysV4 = createPoolKeys(new PublicKey(poolData.id), poolData.state, market);
 
       for (let i = 0; i < this.config.maxSellRetries; i++) {
@@ -313,7 +335,7 @@ export class Bot {
           }
 
           logger.info(
-            { mint: rawAccount.mint },
+            { mint: rawAccount.mint.toString() },
             `Send sell transaction attempt: ${i + 1}/${this.config.maxSellRetries}`,
           );
 

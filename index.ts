@@ -1,4 +1,4 @@
-import { MarketCache, PoolCache } from './cache';
+import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
@@ -285,14 +285,15 @@ const runListener = async () => {
     let lag = currentTimestamp - poolOpenTime;
 
     if (!exists && poolOpenTime > runTimestamp) {
-      poolCache.save(updatedAccountInfo.accountId.toString(), poolState);
-      
+      const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
+      poolCache.save(snapshot);
+
       if(MAX_LAG != 0 && lag > MAX_LAG){
         logger.trace(`Lag too high: ${lag} sec`);
         return;
       } else {
         logger.trace(`Lag: ${lag} sec`);
-        await bot.buy(updatedAccountInfo.accountId, poolState, lag);
+        await bot.buy(snapshot, lag);
       }
     }
   });

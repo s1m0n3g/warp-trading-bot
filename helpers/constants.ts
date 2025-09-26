@@ -33,6 +33,7 @@ export const CACHE_NEW_MARKETS = retrieveEnvVariable('CACHE_NEW_MARKETS', logger
 export const TRANSACTION_EXECUTOR = retrieveEnvVariable('TRANSACTION_EXECUTOR', logger);
 export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
+export const MAX_PRE_SWAP_VOLUME = Number(process.env.MAX_PRE_SWAP_VOLUME ?? '0');
 export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
 export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
 export const ENABLE_PUMPFUN = (process.env.ENABLE_PUMPFUN ?? 'false') === 'true';

@@ -49,6 +49,7 @@ You should see the following output:
   - Minimum value is 0.0001 SOL, but we recommend using 0.006 SOL or above
   - On top of this fee, minimal solana network fee will be applied
 - `MAX_LAG` - Ignore tokens that PoolOpenTime is longer than now + `MAX_LAG` seconds
+- `MAX_PRE_SWAP_VOLUME` - Allow pools where the sum of swap in/out volumes (in raw token units) is below this threshold; `0` keeps the previous behaviour of requiring zero swaps
 - `USE_TA` - Use technical analysis for entries and exits (VERY HARD ON RPC's)
   - Set to `false` to disable technical analysis indicators; the MACD/RSI environment variables are not required in that case.
 - `USE_TELEGRAM` - Use telegram bot for notifications

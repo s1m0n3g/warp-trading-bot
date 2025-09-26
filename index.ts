@@ -1,3 +1,4 @@
+import BN from 'bn.js';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
@@ -49,6 +50,7 @@ import {
   TRAILING_STOP_LOSS,
   SKIP_SELLING_IF_LOST_MORE_THAN,
   MAX_LAG,
+  MAX_PRE_SWAP_VOLUME,
   CHECK_HOLDERS,
   CHECK_ABNORMAL_DISTRIBUTION,
   CHECK_TOKEN_DISTRIBUTION,
@@ -116,6 +118,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
+  logger.info(`Max pre swap volume: ${MAX_PRE_SWAP_VOLUME}`);
   logger.info(`Pump.fun listener enabled: ${botConfig.enablePumpfun}`);
   logger.info(`Telegram notifications: ${botConfig.useTelegram}`);
 
@@ -294,11 +297,12 @@ const runListener = async () => {
     poolCache.save(snapshot);
 
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
-    const hasSwaps =
-      !poolState.swapBaseInAmount.eqn(0) ||
-      !poolState.swapQuoteInAmount.eqn(0) ||
-      !poolState.swapQuoteOutAmount.eqn(0) ||
-      !poolState.swapBaseOutAmount.eqn(0);
+    const totalSwapVolume = poolState.swapBaseInAmount
+      .add(poolState.swapBaseOutAmount)
+      .add(poolState.swapQuoteInAmount)
+      .add(poolState.swapQuoteOutAmount);
+
+    const hasSwaps = !totalSwapVolume.eqn(0);
 
     if (!hasSwaps && poolOpenTime !== 0 && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
@@ -306,8 +310,25 @@ const runListener = async () => {
     }
 
     if (hasSwaps) {
-      logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
-      return;
+      if (MAX_PRE_SWAP_VOLUME === 0) {
+        logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
+        return;
+      }
+
+      const maxAllowedVolume = new BN(MAX_PRE_SWAP_VOLUME.toString());
+
+      if (totalSwapVolume.gt(maxAllowedVolume)) {
+        logger.trace(
+          { mint: poolMint, totalSwapVolume: totalSwapVolume.toString() },
+          'Skipping pool because swaps already occurred',
+        );
+        return;
+      }
+
+      logger.trace(
+        { mint: poolMint, totalSwapVolume: totalSwapVolume.toString() },
+        'Pool has swaps within allowed threshold; continuing',
+      );
     }
 
     const currentTimestamp = Math.floor(new Date().getTime() / 1000);

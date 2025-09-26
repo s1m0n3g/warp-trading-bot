@@ -164,6 +164,7 @@ export class Bot {
   public async buy(pool: PoolSnapshot, lag: number = 0): Promise<void> {
     const cachedPool = await this.poolStorage.get(pool.baseMint.toBase58());
     const poolSnapshot = cachedPool ?? pool;
+    const poolType = poolSnapshot.type;
     const poolMint = poolSnapshot.baseMint.toBase58();
 
     logger.trace({ mint: poolMint }, `Processing new pool...`);
@@ -175,7 +176,7 @@ export class Bot {
     }
 
     if (!isRaydiumPool(poolSnapshot)) {
-      logger.warn({ mint: poolMint }, `Unsupported pool type for buy operation: ${poolSnapshot.type}`);
+      logger.warn({ mint: poolMint }, `Unsupported pool type for buy operation: ${poolType}`);
       return;
     }
 
@@ -330,8 +331,10 @@ export class Bot {
         return;
       }
 
+      const poolType = poolData.type;
+
       if (!isRaydiumPool(poolData)) {
-        logger.warn({ mint: rawAccount.mint.toString() }, `Unsupported pool type for sell operation: ${poolData.type}`);
+        logger.warn({ mint: rawAccount.mint.toString() }, `Unsupported pool type for sell operation: ${poolType}`);
         return;
       }
 

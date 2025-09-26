@@ -90,35 +90,40 @@ export class Messaging {
     return result;
   }
 
-  public async sendTelegramMessage(message: string, mint: string, messageId?: number): Promise<Message.TextMessage | undefined> {
-    if(!this.config.useTelegram || !this.tg_bot){
+  public async sendTelegramMessage(
+    message: string,
+    mint: string,
+    options?: number | { messageId?: number; source?: 'raydium' | 'pumpfun' },
+  ): Promise<Message.TextMessage | undefined> {
+    if (!this.config.useTelegram || !this.tg_bot) {
       return null;
     }
 
+    const { messageId, source } =
+      typeof options === 'number' ? { messageId: options, source: undefined } : options ?? {};
+
+    const dexLink = source === 'pumpfun'
+      ? { text: '🚀 pump.fun', url: `https://pump.fun/coin/${mint}` }
+      : { text: '🍔Dexscreener', url: `https://dexscreener.com/solana/${mint}?maker=${this.config.wallet.publicKey}` };
+
     try {
-      let kb: InlineKeyboardMarkup = {
-        inline_keyboard: [
-          [
-            { text: '🍔Dexscreener', url: `https://dexscreener.com/solana/${mint}?maker=${this.config.wallet.publicKey}` },
-            { text: 'Rugcheck🔍', url: `https://rugcheck.xyz/tokens/${mint}` }
-          ]
-        ]
+      const kb: InlineKeyboardMarkup = {
+        inline_keyboard: [[dexLink, { text: 'Rugcheck🔍', url: `https://rugcheck.xyz/tokens/${mint}` }]],
       };
 
       if (messageId) {
         this.tg_bot.telegram.editMessageText(this.config.telegramChatId!, messageId, undefined, message, {
-          parse_mode: "HTML", reply_markup: kb
+          parse_mode: 'HTML',
+          reply_markup: kb,
         });
         return undefined;
-
       } else {
         return await this.tg_bot.telegram.sendMessage(this.config.telegramChatId!, message, {
-          parse_mode: "HTML", reply_markup: kb
+          parse_mode: 'HTML',
+          reply_markup: kb,
         });
       }
-
-    }
-    catch (e) {
+    } catch (e) {
       return undefined;
     }
   }

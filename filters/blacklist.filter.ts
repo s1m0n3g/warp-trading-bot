@@ -22,8 +22,12 @@ export class BlacklistFilter implements Filter {
       const metadataPDA = getPdaMetadataKey(poolKeys.baseMint);
       const metadataAccount = await this.connection.getAccountInfo(metadataPDA.publicKey, this.connection.commitment);
 
-      if (!metadataAccount?.data) {
-        return { ok: false, message: 'Blacklist -> Failed to fetch account data' };
+      if (!metadataAccount?.data?.length) {
+        logger.debug(
+          { mint: poolKeys.baseMint.toString() },
+          'Blacklist -> Metadata account not found, skipping blacklist check',
+        );
+        return { ok: true };
       }
 
       const deserialize = metadataSerializer.deserialize(metadataAccount.data);
@@ -35,12 +39,8 @@ export class BlacklistFilter implements Filter {
       return { ok: true, message: undefined };
 
     } catch (e) {
-      logger.error({ mint: poolKeys.baseMint }, `Blacklist -> Failed to check blacklist`);
+      logger.error({ mint: poolKeys.baseMint, error: e }, `Blacklist -> Failed to check blacklist, skipping`);
+      return { ok: true };
     }
-
-    return {
-      ok: false,
-      message: `Blacklist -> Failed to check for cringe`,
-    };
   }
 }

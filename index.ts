@@ -1,3 +1,4 @@
+import BN from 'bn.js';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
@@ -49,6 +50,8 @@ import {
   TRAILING_STOP_LOSS,
   SKIP_SELLING_IF_LOST_MORE_THAN,
   MAX_LAG,
+  MAX_PRE_SWAP_VOLUME_IN_QUOTE,
+  MAX_PRE_SWAP_VOLUME_RAW,
   CHECK_HOLDERS,
   CHECK_ABNORMAL_DISTRIBUTION,
   CHECK_TOKEN_DISTRIBUTION,
@@ -78,7 +81,73 @@ const connection = new Connection(RPC_ENDPOINT, {
   commitment: COMMITMENT_LEVEL,
 });
 
-function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
+type ResolvedMaxPreSwapVolume = {
+  raw: BN;
+  display: string;
+};
+
+function resolveMaxPreSwapVolume(quoteToken: Token): ResolvedMaxPreSwapVolume {
+  const quoteThreshold = MAX_PRE_SWAP_VOLUME_IN_QUOTE?.trim();
+  const rawThreshold = MAX_PRE_SWAP_VOLUME_RAW?.trim();
+
+  if (quoteThreshold && rawThreshold) {
+    logger.warn(
+      'Both MAX_PRE_SWAP_VOLUME_IN_QUOTE and MAX_PRE_SWAP_VOLUME are set; using the quote-denominated value.',
+    );
+  }
+
+  if (quoteThreshold) {
+    const amount = new TokenAmount(quoteToken, quoteThreshold, false);
+
+    return {
+      raw: amount.raw,
+      display: `${quoteThreshold} ${quoteToken.symbol} (${amount.raw.toString()} raw units)`,
+    };
+  }
+
+  if (rawThreshold) {
+    if (rawThreshold.startsWith('-')) {
+      logger.warn('MAX_PRE_SWAP_VOLUME cannot be negative; defaulting to zero');
+    } else if (/^\d+$/.test(rawThreshold)) {
+      const rawValue = new BN(rawThreshold);
+      const approx = new TokenAmount(quoteToken, rawValue, true);
+
+      return {
+        raw: rawValue,
+        display: `${rawValue.toString()} raw units (~${approx.toFixed()} ${quoteToken.symbol})`,
+      };
+    } else {
+      try {
+        const amount = new TokenAmount(quoteToken, rawThreshold, false);
+        logger.warn(
+          `MAX_PRE_SWAP_VOLUME should be an integer raw amount. Interpreting "${rawThreshold}" as ${quoteToken.symbol}.`,
+        );
+
+        return {
+          raw: amount.raw,
+          display: `${rawThreshold} ${quoteToken.symbol} (${amount.raw.toString()} raw units)`,
+        };
+      } catch (error) {
+        logger.error({ err: error, rawThreshold }, 'Invalid MAX_PRE_SWAP_VOLUME value; defaulting to zero');
+      }
+    }
+  }
+
+  const zero = new BN(0);
+  const approx = new TokenAmount(quoteToken, zero, true);
+
+  return {
+    raw: zero,
+    display: `${zero.toString()} raw units (~${approx.toFixed()} ${quoteToken.symbol})`,
+  };
+}
+
+function printDetails(
+  wallet: Keypair,
+  quoteToken: Token,
+  bot: Bot,
+  maxPreSwapVolume: ResolvedMaxPreSwapVolume,
+) {
   logger.info(`  
                                         ..   :-===++++-     
                                 .-==+++++++- =+++++++++-    
@@ -116,6 +185,7 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
+  logger.info(`Max pre swap volume: ${maxPreSwapVolume.display}`);
   logger.info(`Pump.fun listener enabled: ${botConfig.enablePumpfun}`);
   logger.info(`Telegram notifications: ${botConfig.useTelegram}`);
 
@@ -276,6 +346,9 @@ const runListener = async () => {
     enablePumpfun: ENABLE_PUMPFUN,
   });
 
+  const maxPreSwapVolume = resolveMaxPreSwapVolume(quoteToken);
+  const maxPreSwapVolumeRaw = maxPreSwapVolume.raw;
+
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
     const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
     marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
@@ -294,11 +367,12 @@ const runListener = async () => {
     poolCache.save(snapshot);
 
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
-    const hasSwaps =
-      !poolState.swapBaseInAmount.eqn(0) ||
-      !poolState.swapQuoteInAmount.eqn(0) ||
-      !poolState.swapQuoteOutAmount.eqn(0) ||
-      !poolState.swapBaseOutAmount.eqn(0);
+    const totalSwapVolume = poolState.swapBaseInAmount
+      .add(poolState.swapBaseOutAmount)
+      .add(poolState.swapQuoteInAmount)
+      .add(poolState.swapQuoteOutAmount);
+
+    const hasSwaps = !totalSwapVolume.eqn(0);
 
     if (!hasSwaps && poolOpenTime !== 0 && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
@@ -306,8 +380,31 @@ const runListener = async () => {
     }
 
     if (hasSwaps) {
-      logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
-      return;
+      if (maxPreSwapVolumeRaw.isZero()) {
+        logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
+        return;
+      }
+
+      if (totalSwapVolume.gt(maxPreSwapVolumeRaw)) {
+        logger.trace(
+          {
+            mint: poolMint,
+            totalSwapVolume: totalSwapVolume.toString(),
+            maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
+          },
+          'Skipping pool because swaps already occurred',
+        );
+        return;
+      }
+
+      logger.trace(
+        {
+          mint: poolMint,
+          totalSwapVolume: totalSwapVolume.toString(),
+          maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
+        },
+        'Pool has swaps within allowed threshold; continuing',
+      );
     }
 
     const currentTimestamp = Math.floor(new Date().getTime() / 1000);
@@ -338,7 +435,7 @@ const runListener = async () => {
     });
   }
 
-  printDetails(wallet, quoteToken, bot);
+  printDetails(wallet, quoteToken, bot, maxPreSwapVolume);
 };
 
 runListener();

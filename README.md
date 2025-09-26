@@ -50,7 +50,9 @@ You should see the following output:
   - On top of this fee, minimal solana network fee will be applied
 - `MAX_LAG` - Ignore tokens that PoolOpenTime is longer than now + `MAX_LAG` seconds
 - `USE_TA` - Use technical analysis for entries and exits (VERY HARD ON RPC's)
+  - Set to `false` to disable technical analysis indicators; the MACD/RSI environment variables are not required in that case.
 - `USE_TELEGRAM` - Use telegram bot for notifications
+  - Set to `false` to disable Telegram integration; `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` can be omitted when disabled.
 
 #### Buy
 
@@ -134,6 +136,19 @@ Note: When using snipe list filters below will be disabled.
 - `MACD_SIGNAL_PERIOD` - default 9
 
 - `RSI_PERIOD` - default 14
+
+> ℹ️ These indicators are only required when `USE_TA=true`. When technical analysis is disabled you can leave them unset and the bot will still start successfully.
+
+### Starting without Telegram or technical analysis
+
+Set the following feature flags to `false` in your environment to skip their related credentials:
+
+```
+USE_TELEGRAM=false
+USE_TA=false
+```
+
+With this configuration you can omit `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `MACD_SHORT_PERIOD`, `MACD_LONG_PERIOD`, `MACD_SIGNAL_PERIOD`, and `RSI_PERIOD` from your `.env`. The bot will log that Telegram and technical analysis are disabled and will start normally.
 
 ## Warp transactions (beta)
 

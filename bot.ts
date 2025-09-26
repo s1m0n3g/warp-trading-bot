@@ -58,20 +58,20 @@ export interface BotConfig {
   checkHolders: boolean;
   checkTokenDistribution: boolean;
   checkAbnormalDistribution: boolean;
-  telegramChatId: number;
-  telegramBotToken: string,
-  blacklistRefreshInterval: number,
-  MACDLongPeriod: number,
-  MACDShortPeriod: number,
-  MACDSignalPeriod: number,
-  RSIPeriod: number,
-  autoSellWithoutSellSignal: boolean,
-  buySignalTimeToWait: number,
-  buySignalPriceInterval: number,
-  buySignalFractionPercentageTimeToWait: number,
-  buySignalLowVolumeThreshold: number,
-  useTechnicalAnalysis: boolean,
-  useTelegram: boolean
+  telegramChatId?: number;
+  telegramBotToken?: string;
+  blacklistRefreshInterval: number;
+  MACDLongPeriod?: number;
+  MACDShortPeriod?: number;
+  MACDSignalPeriod?: number;
+  RSIPeriod?: number;
+  autoSellWithoutSellSignal: boolean;
+  buySignalTimeToWait: number;
+  buySignalPriceInterval: number;
+  buySignalFractionPercentageTimeToWait: number;
+  buySignalLowVolumeThreshold: number;
+  useTechnicalAnalysis: boolean;
+  useTelegram: boolean;
 }
 
 export class Bot {

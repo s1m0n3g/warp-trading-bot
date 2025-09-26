@@ -3,11 +3,15 @@ import { InlineKeyboardMarkup, Message } from "telegraf/typings/core/types/typeg
 import { BotConfig } from "./bot";
 
 export class Messaging {
-  private readonly tg_bot: Telegraf;
+  private readonly tg_bot?: Telegraf;
 
   constructor(readonly config: BotConfig) {
 
     if (this.config.useTelegram) {
+      if (!this.config.telegramBotToken || !this.config.telegramChatId) {
+        throw new Error('Telegram is enabled but credentials are missing.');
+      }
+
       this.tg_bot = new Telegraf(this.config.telegramBotToken);
       this.setupBot();
       this.tg_bot.launch();
@@ -87,7 +91,7 @@ export class Messaging {
   }
 
   public async sendTelegramMessage(message: string, mint: string, messageId?: number): Promise<Message.TextMessage | undefined> {
-    if(!this.config.useTelegram){
+    if(!this.config.useTelegram || !this.tg_bot){
       return null;
     }
 
@@ -102,13 +106,13 @@ export class Messaging {
       };
 
       if (messageId) {
-        this.tg_bot.telegram.editMessageText(this.config.telegramChatId, messageId, undefined, message, {
+        this.tg_bot.telegram.editMessageText(this.config.telegramChatId!, messageId, undefined, message, {
           parse_mode: "HTML", reply_markup: kb
         });
         return undefined;
 
       } else {
-        return await this.tg_bot.telegram.sendMessage(this.config.telegramChatId, message, {
+        return await this.tg_bot.telegram.sendMessage(this.config.telegramChatId!, message, {
           parse_mode: "HTML", reply_markup: kb
         });
       }

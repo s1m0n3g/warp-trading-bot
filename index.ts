@@ -114,6 +114,11 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
+  logger.info(`Telegram notifications: ${botConfig.useTelegram}`);
+
+  if (botConfig.useTelegram) {
+    logger.info(`Telegram chat id: ${botConfig.telegramChatId}`);
+  }
 
   logger.info('- Buy -');
   logger.info(`Buy amount: ${botConfig.quoteAmount.toFixed()} ${botConfig.quoteToken.name}`);
@@ -160,8 +165,12 @@ function printDetails(wallet: Keypair, quoteToken: Token, bot: Bot) {
   logger.info(`Check Abnormal Distribution: ${botConfig.checkAbnormalDistribution}`);
   logger.info(`Blacklist refresh interval: ${BLACKLIST_REFRESH_INTERVAL}`);
 
-  logger.info(`Buy signal MACD: ${MACD_SHORT_PERIOD}/${MACD_LONG_PERIOD}/${MACD_SIGNAL_PERIOD}`);
-  logger.info(`Buy signal RSI: ${RSI_PERIOD}`);
+  logger.info(`Technical analysis enabled: ${botConfig.useTechnicalAnalysis}`);
+
+  if (botConfig.useTechnicalAnalysis) {
+    logger.info(`Buy signal MACD: ${botConfig.MACDShortPeriod}/${botConfig.MACDLongPeriod}/${botConfig.MACDSignalPeriod}`);
+    logger.info(`Buy signal RSI: ${botConfig.RSIPeriod}`);
+  }
   
   logger.info('------- CONFIGURATION END -------');
 

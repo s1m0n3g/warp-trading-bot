@@ -33,8 +33,8 @@ export const CACHE_NEW_MARKETS = retrieveEnvVariable('CACHE_NEW_MARKETS', logger
 export const TRANSACTION_EXECUTOR = retrieveEnvVariable('TRANSACTION_EXECUTOR', logger);
 export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
-export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
 export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
+export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
 
 // Buy
 export const AUTO_BUY_DELAY = Number(retrieveEnvVariable('AUTO_BUY_DELAY', logger));
@@ -90,12 +90,24 @@ export const TOP_10_MAX_PERCENTAGE = Number (retrieveEnvVariable('TOP_10_MAX_PER
 export const HOLDER_MIN_AMOUNT = Number (retrieveEnvVariable('HOLDER_MIN_AMOUNT', logger));
 
 //Telegram config
-export const TELEGRAM_BOT_TOKEN = retrieveEnvVariable('TELEGRAM_BOT_TOKEN', logger);
-export const TELEGRAM_CHAT_ID = Number (retrieveEnvVariable('TELEGRAM_CHAT_ID', logger));
+export const TELEGRAM_BOT_TOKEN = USE_TELEGRAM
+  ? retrieveEnvVariable('TELEGRAM_BOT_TOKEN', logger)
+  : undefined;
+export const TELEGRAM_CHAT_ID = USE_TELEGRAM
+  ? Number(retrieveEnvVariable('TELEGRAM_CHAT_ID', logger))
+  : undefined;
 
 //Technical analysis
-export const MACD_SHORT_PERIOD = Number (retrieveEnvVariable('MACD_SHORT_PERIOD', logger));
-export const MACD_LONG_PERIOD = Number (retrieveEnvVariable('MACD_LONG_PERIOD', logger));
-export const MACD_SIGNAL_PERIOD = Number (retrieveEnvVariable('MACD_SIGNAL_PERIOD', logger));
+export const MACD_SHORT_PERIOD = USE_TA
+  ? Number(retrieveEnvVariable('MACD_SHORT_PERIOD', logger))
+  : undefined;
+export const MACD_LONG_PERIOD = USE_TA
+  ? Number(retrieveEnvVariable('MACD_LONG_PERIOD', logger))
+  : undefined;
+export const MACD_SIGNAL_PERIOD = USE_TA
+  ? Number(retrieveEnvVariable('MACD_SIGNAL_PERIOD', logger))
+  : undefined;
 
-export const RSI_PERIOD = Number (retrieveEnvVariable('RSI_PERIOD', logger));
+export const RSI_PERIOD = USE_TA
+  ? Number(retrieveEnvVariable('RSI_PERIOD', logger))
+  : undefined;

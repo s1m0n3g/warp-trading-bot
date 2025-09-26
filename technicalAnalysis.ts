@@ -1,7 +1,18 @@
 import { BotConfig } from "./bot";
 
 export class TechnicalAnalysis {
-    constructor(public botConfig: BotConfig) { }
+    constructor(public botConfig: BotConfig) {
+        if (botConfig.useTechnicalAnalysis) {
+            if (
+                botConfig.MACDShortPeriod == null ||
+                botConfig.MACDLongPeriod == null ||
+                botConfig.MACDSignalPeriod == null ||
+                botConfig.RSIPeriod == null
+            ) {
+                throw new Error('Technical analysis periods must be provided when technical analysis is enabled.');
+            }
+        }
+    }
 
     public calculateEMAs = (prices: number[]): { EMA_3: number, EMA_18: number, prevEMA_3: number } => {
         const shortPeriod = 3;

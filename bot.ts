@@ -18,7 +18,14 @@ import { Liquidity, LiquidityPoolKeysV4, LiquidityStateV4, Percent, Token, Token
 import { MarketCache, PoolCache, SnipeListCache } from './cache';
 import { PoolFilters } from './filters';
 import { TransactionExecutor } from './transactions';
-import { createPoolKeys, KEEP_5_PERCENT_FOR_MOONSHOTS, logger, NETWORK, sleep } from './helpers';
+import {
+  PumpfunPoolEventPayload,
+  createPoolKeys,
+  KEEP_5_PERCENT_FOR_MOONSHOTS,
+  logger,
+  NETWORK,
+  sleep,
+} from './helpers';
 import { Semaphore } from 'async-mutex';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
 import { JitoTransactionExecutor } from './transactions/jito-rpc-transaction-executor';
@@ -72,6 +79,7 @@ export interface BotConfig {
   buySignalLowVolumeThreshold: number;
   useTechnicalAnalysis: boolean;
   useTelegram: boolean;
+  enablePumpfun: boolean;
 }
 
 export class Bot {
@@ -113,6 +121,10 @@ export class Bot {
       this.snipeListCache = new SnipeListCache();
       this.snipeListCache.init();
     }
+  }
+
+  public async handlePumpfunPool(_payload: PumpfunPoolEventPayload): Promise<void> {
+    logger.trace('Received pump.fun pool update');
   }
 
   async validate() {

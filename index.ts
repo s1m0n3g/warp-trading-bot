@@ -283,24 +283,43 @@ const runListener = async () => {
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
-    const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
-    const exists = await poolCache.get(poolState.baseMint.toString());
+    const poolMint = poolState.baseMint.toString();
+    const exists = await poolCache.get(poolMint);
 
-    let currentTimestamp = Math.floor(new Date().getTime() / 1000);
-    let lag = currentTimestamp - poolOpenTime;
-
-    if (!exists && poolOpenTime > runTimestamp) {
-      const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-      poolCache.save(snapshot);
-
-      if(MAX_LAG != 0 && lag > MAX_LAG){
-        logger.trace(`Lag too high: ${lag} sec`);
-        return;
-      } else {
-        logger.trace(`Lag: ${lag} sec`);
-        await bot.buy(snapshot, lag);
-      }
+    if (exists) {
+      return;
     }
+
+    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
+    poolCache.save(snapshot);
+
+    const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
+    const hasSwaps =
+      !poolState.swapBaseInAmount.eqn(0) ||
+      !poolState.swapQuoteInAmount.eqn(0) ||
+      !poolState.swapQuoteOutAmount.eqn(0) ||
+      !poolState.swapBaseOutAmount.eqn(0);
+
+    if (!hasSwaps && poolOpenTime !== 0 && poolOpenTime < runTimestamp) {
+      logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
+      return;
+    }
+
+    if (hasSwaps) {
+      logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
+      return;
+    }
+
+    const currentTimestamp = Math.floor(new Date().getTime() / 1000);
+    const lag = poolOpenTime === 0 ? 0 : currentTimestamp - poolOpenTime;
+
+    if (MAX_LAG !== 0 && lag > MAX_LAG) {
+      logger.trace(`Lag too high: ${lag} sec`);
+      return;
+    }
+
+    logger.trace(`Lag: ${lag} sec`);
+    await bot.buy(snapshot, lag);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {

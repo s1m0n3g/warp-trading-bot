@@ -14,8 +14,6 @@ const retrieveEnvVariable = (variableName: string, logger: Logger) => {
   return variable;
 };
 
-const retrieveOptionalEnvVariable = (variableName: string) => process.env[variableName] || '';
-
 // Wallet
 export const PRIVATE_KEY = retrieveEnvVariable('PRIVATE_KEY', logger);
 
@@ -36,8 +34,7 @@ export const TRANSACTION_EXECUTOR = retrieveEnvVariable('TRANSACTION_EXECUTOR', 
 export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
 export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
-const USE_TELEGRAM_ENV = retrieveEnvVariable('USE_TELEGRAM', logger);
-let useTelegram = USE_TELEGRAM_ENV === 'true';
+export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
 
 // Buy
 export const AUTO_BUY_DELAY = Number(retrieveEnvVariable('AUTO_BUY_DELAY', logger));
@@ -93,31 +90,8 @@ export const TOP_10_MAX_PERCENTAGE = Number (retrieveEnvVariable('TOP_10_MAX_PER
 export const HOLDER_MIN_AMOUNT = Number (retrieveEnvVariable('HOLDER_MIN_AMOUNT', logger));
 
 //Telegram config
-const TELEGRAM_BOT_TOKEN_ENV = retrieveOptionalEnvVariable('TELEGRAM_BOT_TOKEN');
-const TELEGRAM_CHAT_ID_ENV = retrieveOptionalEnvVariable('TELEGRAM_CHAT_ID');
-
-if (useTelegram) {
-  if (!TELEGRAM_BOT_TOKEN_ENV) {
-    logger.warn('TELEGRAM_BOT_TOKEN is not set. Disabling Telegram notifications.');
-    useTelegram = false;
-  }
-
-  if (!TELEGRAM_CHAT_ID_ENV) {
-    logger.warn('TELEGRAM_CHAT_ID is not set. Disabling Telegram notifications.');
-    useTelegram = false;
-  }
-}
-
-const TELEGRAM_CHAT_ID_NUMBER = TELEGRAM_CHAT_ID_ENV ? Number(TELEGRAM_CHAT_ID_ENV) : 0;
-
-if (useTelegram && TELEGRAM_CHAT_ID_ENV && Number.isNaN(TELEGRAM_CHAT_ID_NUMBER)) {
-  logger.error('TELEGRAM_CHAT_ID must be a number');
-  process.exit(1);
-}
-
-export const TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN_ENV;
-export const TELEGRAM_CHAT_ID = TELEGRAM_CHAT_ID_NUMBER;
-export const USE_TELEGRAM = useTelegram;
+export const TELEGRAM_BOT_TOKEN = retrieveEnvVariable('TELEGRAM_BOT_TOKEN', logger);
+export const TELEGRAM_CHAT_ID = Number (retrieveEnvVariable('TELEGRAM_CHAT_ID', logger));
 
 //Technical analysis
 export const MACD_SHORT_PERIOD = Number (retrieveEnvVariable('MACD_SHORT_PERIOD', logger));

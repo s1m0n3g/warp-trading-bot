@@ -373,6 +373,8 @@ const runListener = async () => {
       .add(poolState.swapQuoteOutAmount);
 
     const hasSwaps = !totalSwapVolume.eqn(0);
+    const quoteSwapVolume = poolState.swapQuoteInAmount.add(poolState.swapQuoteOutAmount);
+
 
     if (!hasSwaps && poolOpenTime !== 0 && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
@@ -385,11 +387,14 @@ const runListener = async () => {
         return;
       }
 
-      if (totalSwapVolume.gt(maxPreSwapVolumeRaw)) {
+      if (quoteSwapVolume.gt(maxPreSwapVolumeRaw)) {
+
         logger.trace(
           {
             mint: poolMint,
             totalSwapVolume: totalSwapVolume.toString(),
+            quoteSwapVolume: quoteSwapVolume.toString(),
+
             maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
           },
           'Skipping pool because swaps already occurred',
@@ -401,6 +406,8 @@ const runListener = async () => {
         {
           mint: poolMint,
           totalSwapVolume: totalSwapVolume.toString(),
+          quoteSwapVolume: quoteSwapVolume.toString(),
+
           maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
         },
         'Pool has swaps within allowed threshold; continuing',

@@ -3,7 +3,7 @@ import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { AccountLayout, RawAccount, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
 import {
@@ -205,8 +205,8 @@ function printDetails(
   logger.info(`Auto sell delay: ${botConfig.autoSellDelay} ms`);
   logger.info(`Max sell retries: ${botConfig.maxSellRetries}`);
   logger.info(`Sell slippage: ${botConfig.sellSlippage}%`);
-  logger.info(`Price check interval: ${botConfig.priceCheckInterval} ms`);
-  logger.info(`Price check duration: ${botConfig.priceCheckDuration} ms`);
+  logger.info(`Price check interval (PRICE_CHECK_INTERVAL): ${botConfig.priceCheckInterval} ms`);
+  logger.info(`Price check duration (PRICE_CHECK_DURATION): ${botConfig.priceCheckDuration} ms`);
   logger.info(`Take profit: ${botConfig.takeProfit}%`);
   logger.info(`Stop loss: ${botConfig.stopLoss}%`);
   logger.info(`Trailing stop loss: ${botConfig.trailingStopLoss}`);
@@ -346,6 +346,59 @@ const runListener = async () => {
     cacheNewMarkets: CACHE_NEW_MARKETS,
     enablePumpfun: ENABLE_PUMPFUN,
   });
+
+  if (AUTO_SELL) {
+    try {
+      const { value: existingTokenAccounts } = await connection.getTokenAccountsByOwner(wallet.publicKey, {
+        programId: TOKEN_PROGRAM_ID,
+      });
+
+      const walletMints = new Set<string>();
+
+      for (const { pubkey, account } of existingTokenAccounts) {
+        const accountData = AccountLayout.decode(account.data) as RawAccount;
+        const mint = accountData.mint.toString();
+
+        if (accountData.mint.equals(quoteToken.mint)) {
+          continue;
+        }
+
+        const balance = BigInt(accountData.amount.toString());
+        if (balance === 0n) {
+          continue;
+        }
+
+        walletMints.add(mint);
+
+        const cachedPool = await poolCache.get(mint);
+
+        if (!cachedPool) {
+          logger.trace({ mint }, 'Skipping resume for token without cached pool data');
+          continue;
+        }
+
+        if (cachedPool.sold) {
+          logger.trace({ mint }, 'Skipping resume for token already marked as sold');
+          continue;
+        }
+
+        logger.info({ mint, account: pubkey.toBase58() }, 'Resuming sell monitoring for existing position');
+        void bot.sell(pubkey, accountData);
+      }
+
+      for (const snapshot of poolCache.getUnsold()) {
+        const mint = snapshot.baseMint.toBase58();
+        if (walletMints.has(mint)) {
+          continue;
+        }
+
+        logger.debug({ mint }, 'Removing cached position because wallet token account is missing');
+        await poolCache.remove(mint);
+      }
+    } catch (error) {
+      logger.error({ error }, 'Failed to resume monitoring existing token positions');
+    }
+  }
 
   const maxPreSwapVolume = resolveMaxPreSwapVolume(quoteToken);
   const maxPreSwapVolumeRaw = maxPreSwapVolume.raw;

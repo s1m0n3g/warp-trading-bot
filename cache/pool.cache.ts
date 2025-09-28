@@ -142,6 +142,10 @@ export class PoolCache {
     return this.keys.get(mint);
   }
 
+  public getUnsold(): PoolSnapshot[] {
+    return Array.from(this.keys.values()).filter((snapshot) => !snapshot.sold);
+  }
+
   public async markAsSold(mint: string): Promise<void> {
     const pool = this.keys.get(mint);
     if (pool) {
@@ -152,6 +156,12 @@ export class PoolCache {
       }
       await this.persist();
     }
+  }
+
+  public async remove(mint: string): Promise<void> {
+    this.keys.delete(mint);
+    this.persisted.delete(mint);
+    await this.persist();
   }
 
   private serialize(snapshot: PoolSnapshot, rawState?: Buffer): PersistedPoolSnapshot {

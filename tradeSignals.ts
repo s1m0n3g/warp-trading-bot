@@ -27,7 +27,7 @@ export class TradeSignals {
         this.TA = new TechnicalAnalysis(config);
     }
 
-    private getActiveMonitorCount(): number {
+    public getActiveMonitorCount(): number {
         let count = 0;
 
         for (const mint of this.activeSellMonitors.keys()) {

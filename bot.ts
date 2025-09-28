@@ -97,7 +97,6 @@ export class Bot {
   private readonly whitelistCache: WhitelistCache;
 
   private readonly semaphore: Semaphore;
-  private sellExecutionCount = 0;
   public readonly isWarp: boolean = false;
   public readonly isJito: boolean = false;
   private readonly tradeSignals: TradeSignals;
@@ -198,13 +197,14 @@ export class Bot {
       }
     }
 
-    const numberOfActionsBeingProcessed =
-      this.config.maxTokensAtTheTime - this.semaphore.getValue() + this.sellExecutionCount;
+    const activeBuyOperations = Math.max(0, this.config.maxTokensAtTheTime - this.semaphore.getValue());
+    const activeSellMonitors = this.tradeSignals.getActiveMonitorCount();
+    const numberOfActionsBeingProcessed = activeBuyOperations + activeSellMonitors;
 
     if (this.semaphore.isLocked() || numberOfActionsBeingProcessed >= this.config.maxTokensAtTheTime) {
       logger.debug(
         { mint: poolMint },
-        `Skipping buy because max tokens to process at the same time is ${this.config.maxTokensAtTheTime} and currently ${numberOfActionsBeingProcessed} tokens is being processed`,
+        `Skipping buy because max tokens to process at the same time is ${this.config.maxTokensAtTheTime} and currently ${numberOfActionsBeingProcessed} tokens is being processed (buys: ${activeBuyOperations}, sells: ${activeSellMonitors})`,
       );
       return;
     }
@@ -310,8 +310,6 @@ export class Bot {
   }
 
   public async sell(accountId: PublicKey, rawAccount: RawAccount): Promise<void> {
-    this.sellExecutionCount++;
-
     const source: 'raydium' = 'raydium';
 
     try {
@@ -478,8 +476,6 @@ export class Bot {
       }
     } catch (error) {
       logger.error({ mint: rawAccount.mint.toString(), error, source }, `Failed to sell token`);
-    } finally {
-      this.sellExecutionCount--;
     }
   }
 

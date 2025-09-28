@@ -178,10 +178,16 @@ In case TX fails, no fee will be taken from your account.
 If you have an error which is not listed here, please create a new issue in this repository.
 To collect more information on an issue, please change `LOG_LEVEL` to `debug`.
 
+### What happens after a restart?
+
+- The bot persists every pool snapshot it interacts with in `storage/pools.json`. On startup the cache is restored via `PoolCache.init()`, so metadata for tokens you already bought is immediately available again.【F:cache/pool.cache.ts†L68-L123】【F:index.ts†L236-L252】
+- When auto-sell is enabled the wallet subscription is re-established on launch, and Solana will emit account-change notifications for every matching token account (including the ones you still hold). The sell flow therefore keeps monitoring previously purchased tokens as soon as the process comes back up.【F:listeners/listeners.ts†L44-L112】【F:bot.ts†L323-L381】
+- Tokens that you have already marked as sold remain flagged in the cache, preventing duplicate sell attempts after a restart.【F:cache/pool.cache.ts†L124-L180】
+
 ### Unsupported RPC node
 
-- If you see following error in your log file:  
-  `Error: 410 Gone:  {"jsonrpc":"2.0","error":{"code": 410, "message":"The RPC call or parameters have been disabled."}, "id": "986f3599-b2b7-47c4-b951-074c19842bad" }`  
+- If you see following error in your log file:
+  `Error: 410 Gone:  {"jsonrpc":"2.0","error":{"code": 410, "message":"The RPC call or parameters have been disabled."}, "id": "986f3599-b2b7-47c4-b951-074c19842bad" }`
   it means your RPC node doesn't support methods needed to execute script.
   - FIX: Change your RPC node. You can use Helius or Quicknode.
 

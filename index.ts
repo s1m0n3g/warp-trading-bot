@@ -413,6 +413,7 @@ const runListener = async () => {
   const maxLagEnabled = sanitizedMaxLag !== 0;
   const maxLagBigInt = BigInt(Math.max(0, Math.trunc(sanitizedMaxLag)));
   const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
+  const seenRaydiumMints = new Set<string>();
   const seenPumpfunMints = new Set<string>();
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
@@ -425,14 +426,15 @@ const runListener = async () => {
       updatedAccountInfo.accountInfo.data,
     ) as LiquidityStateV4;
     const poolMint = poolState.baseMint.toString();
-    const exists = await poolCache.get(poolMint);
 
-    if (exists) {
+    if (await poolCache.get(poolMint)) {
+      seenRaydiumMints.add(poolMint);
       return;
     }
 
-    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
+    if (seenRaydiumMints.has(poolMint)) {
+      return;
+    }
 
 
   const evaluateRaydiumPool = (poolState: LiquidityStateV4, poolMint: string): RaydiumEvaluationResult => {
@@ -447,17 +449,21 @@ const runListener = async () => {
     const poolOpenTimeIsSentinel = poolOpenTime <= 0n;
 
     if (!poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
+      seenRaydiumMints.add(poolMint);
+
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
       return { shouldProcess: false };
     }
 
     if (hasSwaps) {
       if (maxPreSwapVolumeRaw.isZero()) {
+        seenRaydiumMints.add(poolMint);
         logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
         return { shouldProcess: false };
       }
 
       if (quoteSwapVolume.gt(maxPreSwapVolumeRaw)) {
+        seenRaydiumMints.add(poolMint);
         logger.trace(
           {
             mint: poolMint,
@@ -491,11 +497,15 @@ const runListener = async () => {
 
     if (maxLagEnabled) {
       if (poolOpenTimeIsSentinel) {
+        seenRaydiumMints.add(poolMint);
         logger.trace({ mint: poolMint }, 'Skipping pool with invalid open time');
         return { shouldProcess: false };
       }
 
       if (poolAge > maxLagBigInt) {
+        seenRaydiumMints.add(poolMint);
+        logger.trace({ mint: poolMint, lag: poolAge.toString() }, 'Lag too high');
+        return;
         logger.trace(
           { mint: poolMint, poolAge: poolAge.toString(), maxLag: maxLagBigInt.toString() },
           'Skipping pool because lag too high',
@@ -557,41 +567,13 @@ const runListener = async () => {
 
     const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
-    return { shouldProcess: true, lagSeconds: safeLag, poolAge };
-  };
-
-  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
-    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
-    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
-  });
-
-  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(
-      updatedAccountInfo.accountInfo.data,
-    ) as LiquidityStateV4;
-    const poolMint = poolState.baseMint.toString();
-
-    if (await poolCache.get(poolMint)) {
-      return;
-    }
-
-    if (seenRaydiumMints.has(poolMint)) {
-      return;
-    }
-
-    const evaluation = evaluateRaydiumPool(poolState, poolMint);
-
-    if (!evaluation.shouldProcess) {
-      seenRaydiumMints.add(poolMint);
-      return;
-    }
-
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-    seenRaydiumMints.add(poolMint);
     await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
-    logger.trace(`Lag: ${evaluation.poolAge.toString()} sec`);
-    await bot.buy(snapshot, evaluation.lagSeconds);
+    seenRaydiumMints.add(poolMint);
+    logger.trace({ mint: poolMint, lag: poolAge.toString() }, 'Lag within threshold');
+    await bot.buy(snapshot, safeLag);
+
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
@@ -648,7 +630,8 @@ const runListener = async () => {
 
         if (poolAge > maxLagBigInt) {
           seenPumpfunMints.add(mint);
-          logger.trace(`Pump.fun lag too high: ${poolAge.toString()} sec`);
+          logger.trace({ mint, lag: poolAge.toString() }, 'Pump.fun lag too high');
+
           return;
         }
       }
@@ -656,7 +639,7 @@ const runListener = async () => {
       const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
       seenPumpfunMints.add(mint);
-      logger.trace(`Pump.fun lag: ${poolAge.toString()} sec`);
+      logger.trace({ mint, lag: poolAge.toString() }, 'Pump.fun lag within threshold');
       await bot.handlePumpfunPool(payload, safeLag);
 
     });

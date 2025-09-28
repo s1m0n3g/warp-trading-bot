@@ -256,6 +256,7 @@ const runListener = async () => {
 
   const marketCache = new MarketCache(connection);
   const poolCache = new PoolCache();
+  await poolCache.init();
   const technicalAnalysisCache = new TechnicalAnalysisCache();
 
   let txExecutor: TransactionExecutor;
@@ -364,7 +365,7 @@ const runListener = async () => {
     }
 
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-    poolCache.save(snapshot);
+    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
     const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
     const totalSwapVolume = poolState.swapBaseInAmount

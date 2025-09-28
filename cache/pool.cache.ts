@@ -158,6 +158,12 @@ export class PoolCache {
     }
   }
 
+  public async remove(mint: string): Promise<void> {
+    this.keys.delete(mint);
+    this.persisted.delete(mint);
+    await this.persist();
+  }
+
   private serialize(snapshot: PoolSnapshot, rawState?: Buffer): PersistedPoolSnapshot {
     if (isRaydiumPool(snapshot)) {
       const encodedState = rawState ?? this.encodeRaydiumState(snapshot.state);

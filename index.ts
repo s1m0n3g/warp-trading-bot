@@ -352,6 +352,7 @@ const runListener = async () => {
       const { value: existingTokenAccounts } = await connection.getTokenAccountsByOwner(wallet.publicKey, {
         programId: TOKEN_PROGRAM_ID,
       });
+
       const walletMints = new Set<string>();
 
       for (const { pubkey, account } of existingTokenAccounts) {
@@ -391,8 +392,8 @@ const runListener = async () => {
           continue;
         }
 
-        logger.debug({ mint }, 'Marking cached position as sold because wallet token account is missing');
-        await poolCache.markAsSold(mint);
+        logger.debug({ mint }, 'Removing cached position because wallet token account is missing');
+        await poolCache.remove(mint);
       }
 
     } catch (error) {

@@ -132,8 +132,11 @@ export class Bot {
     }
   }
 
-  public async handlePumpfunPool(_payload: PumpfunPoolEventPayload): Promise<void> {
-    logger.trace('Received pump.fun pool update');
+  public async handlePumpfunPool(
+    _payload: PumpfunPoolEventPayload,
+    lagSeconds: number = 0,
+  ): Promise<void> {
+    logger.trace({ lag: lagSeconds }, 'Received pump.fun pool update');
   }
 
   async validate(): Promise<boolean> {

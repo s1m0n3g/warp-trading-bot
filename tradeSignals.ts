@@ -7,10 +7,16 @@ import BN from "bn.js";
 import { Messaging } from "./messaging";
 import { TechnicalAnalysisCache } from "./cache/technical-analysis.cache";
 
+const EXCLUDED_MONITOR_MINTS = new Set([
+    "So11111111111111111111111111111111111111112",
+    "11111111111111111111111111111111",
+]);
+
 export class TradeSignals {
 
     private readonly TA: TechnicalAnalysis;
     private readonly stopLoss = new Map<string, TokenAmount>();
+    private readonly activeSellMonitors = new Map<string, number>();
 
     constructor(
         private readonly connection: Connection,
@@ -19,6 +25,49 @@ export class TradeSignals {
         private readonly technicalAnalysisCache: TechnicalAnalysisCache
     ) {
         this.TA = new TechnicalAnalysis(config);
+    }
+
+    private getActiveMonitorCount(): number {
+        let count = 0;
+
+        for (const mint of this.activeSellMonitors.keys()) {
+            if (EXCLUDED_MONITOR_MINTS.has(mint)) {
+                continue;
+            }
+
+            if (mint === this.config.quoteToken.mint.toString()) {
+                continue;
+            }
+
+            count++;
+        }
+
+        return count;
+    }
+
+    private formatDuration(durationMs: number): string {
+        if (durationMs <= 0) {
+            return "0s";
+        }
+
+        const totalSeconds = Math.floor(durationMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+
+        const segments: string[] = [];
+
+        if (hours > 0) {
+            segments.push(`${hours}h`);
+        }
+
+        if (minutes > 0 || hours > 0) {
+            segments.push(`${minutes}m`);
+        }
+
+        segments.push(`${seconds}s`);
+
+        return segments.join(" ");
     }
 
     public async waitForBuySignal(poolKeys: LiquidityPoolKeysV4) {
@@ -152,87 +201,119 @@ export class TradeSignals {
 
         const slippage = new Percent(this.config.sellSlippage, 100);
         let timesChecked = 0;
+        const mint = poolKeys.baseMint.toString();
+        const monitorStartTime = this.activeSellMonitors.get(mint) ?? Date.now();
+        this.activeSellMonitors.set(mint, monitorStartTime);
+        const initialQuoteAmount = parseFloat(this.config.quoteAmount.toFixed());
         //let telegram_status_message_id: number | undefined = undefined;
 
-        do {
-            try {
-                const poolInfo = await Liquidity.fetchInfo({
-                    connection: this.connection,
-                    poolKeys,
-                });
+        try {
+            do {
+                try {
+                    const poolInfo = await Liquidity.fetchInfo({
+                        connection: this.connection,
+                        poolKeys,
+                    });
 
-                const amountOut = Liquidity.computeAmountOut({
-                    poolKeys,
-                    poolInfo,
-                    amountIn: amountIn,
-                    currencyOut: this.config.quoteToken,
-                    slippage,
-                }).amountOut as TokenAmount;
+                    const amountOut = Liquidity.computeAmountOut({
+                        poolKeys,
+                        poolInfo,
+                        amountIn: amountIn,
+                        currencyOut: this.config.quoteToken,
+                        slippage,
+                    }).amountOut as TokenAmount;
 
-                if (this.config.trailingStopLoss && stopLoss) {
-                    const trailingLossFraction = amountOut.mul(this.config.stopLoss).numerator.div(new BN(100));
-                    const trailingLossAmount = new TokenAmount(this.config.quoteToken, trailingLossFraction, true);
-                    const trailingStopLoss = amountOut.subtract(trailingLossAmount);
+                    if (this.config.trailingStopLoss && stopLoss) {
+                        const trailingLossFraction = amountOut.mul(this.config.stopLoss).numerator.div(new BN(100));
+                        const trailingLossAmount = new TokenAmount(this.config.quoteToken, trailingLossFraction, true);
+                        const trailingStopLoss = amountOut.subtract(trailingLossAmount);
 
-                    if (trailingStopLoss.gt(stopLoss)) {
-                        logger.trace(
-                            { mint: poolKeys.baseMint.toString() },
-                            `Updating trailing stop loss from ${stopLoss.toFixed()} to ${trailingStopLoss.toFixed()}`,
-                        );
-                        this.stopLoss.set(poolKeys.baseMint.toString(), trailingStopLoss);
-                        stopLoss = trailingStopLoss;
+                        if (trailingStopLoss.gt(stopLoss)) {
+                            logger.trace(
+                                { mint: poolKeys.baseMint.toString() },
+                                `Updating trailing stop loss from ${stopLoss.toFixed()} to ${trailingStopLoss.toFixed()}`,
+                            );
+                            this.stopLoss.set(poolKeys.baseMint.toString(), trailingStopLoss);
+                            stopLoss = trailingStopLoss;
+                        }
                     }
-                }
 
-                if (this.config.skipSellingIfLostMoreThan > 0) {
-                    const stopSellingFraction = this.config.quoteAmount
-                        .mul(100 - this.config.skipSellingIfLostMoreThan)
-                        .numerator.div(new BN(100));
+                    if (this.config.skipSellingIfLostMoreThan > 0) {
+                        const stopSellingFraction = this.config.quoteAmount
+                            .mul(100 - this.config.skipSellingIfLostMoreThan)
+                            .numerator.div(new BN(100));
 
-                    const stopSellingAmount = new TokenAmount(this.config.quoteToken, stopSellingFraction, true);
+                        const stopSellingAmount = new TokenAmount(this.config.quoteToken, stopSellingFraction, true);
 
-                    if (amountOut.lt(stopSellingAmount)) {
-                        logger.info(
-                            { mint: poolKeys.baseMint.toString() },
-                            `Token dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped. Initial: ${this.config.quoteAmount.toFixed()} | Current: ${amountOut.toFixed()}`,
-                        );
+                        if (amountOut.lt(stopSellingAmount)) {
+                            logger.info(
+                                { mint: poolKeys.baseMint.toString() },
+                                `Token dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped. Initial: ${this.config.quoteAmount.toFixed()} | Current: ${amountOut.toFixed()}`,
+                            );
 
-                        await this.messaging.sendTelegramMessage(`🚨RUG RUG RUG🚨\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nToken dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped\nInitial: <code>${this.config.quoteAmount.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>`, poolKeys.baseMint.toString())
+                            await this.messaging.sendTelegramMessage(`🚨RUG RUG RUG🚨\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nToken dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped\nInitial: <code>${this.config.quoteAmount.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>`, poolKeys.baseMint.toString())
 
+                            this.stopLoss.delete(poolKeys.baseMint.toString());
+                            return false;
+                        }
+                    }
+
+                    const currentAmountNumber = parseFloat(amountOut.toFixed());
+                    const profitOrLossValue = currentAmountNumber - initialQuoteAmount;
+                    const percentageChange = initialQuoteAmount === 0
+                        ? 0
+                        : (profitOrLossValue / initialQuoteAmount) * 100;
+                    const statusLabel = profitOrLossValue >= 0 ? "🟢Profit" : "🔴Loss";
+                    const signedAmount = `${profitOrLossValue >= 0 ? "+" : "-"}${Math.abs(profitOrLossValue).toFixed(5)} ${this.config.quoteToken.symbol}`;
+                    const elapsed = this.formatDuration(Date.now() - monitorStartTime);
+                    const monitoringCount = this.getActiveMonitorCount();
+                    const progress = infiniteCheck ? `${timesChecked + 1}/∞` : `${timesChecked + 1}/${timesToCheck}`;
+                    const stopLossSection = stopLoss ? `Stop loss: ${stopLoss.toFixed()}` : undefined;
+
+                    const messageParts = [
+                        `${progress} Take profit: ${takeProfit.toFixed()}`,
+                        `Current: ${amountOut.toFixed()}`,
+                        `${statusLabel} ${signedAmount} (${percentageChange.toFixed(2)}%)`,
+                        `Active: ${elapsed}`,
+                        `Tokens monitored (ex. SOL/WSOL): ${monitoringCount}`,
+                    ];
+
+                    if (stopLossSection) {
+                        messageParts.splice(1, 0, stopLossSection);
+                    }
+
+                    logger.debug(
+                        { mint: poolKeys.baseMint.toString() },
+                        messageParts.join(" | "),
+                    );
+
+                    if (stopLoss && amountOut.lt(stopLoss)) {
                         this.stopLoss.delete(poolKeys.baseMint.toString());
-                        return false;
+                        return true;
                     }
+
+                    if (amountOut.gt(takeProfit)) {
+                        this.stopLoss.delete(poolKeys.baseMint.toString());
+                        return true;
+                    }
+
+                    await sleep(this.config.priceCheckInterval);
+                } catch (e) {
+                    logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
+                } finally {
+                    timesChecked++;
                 }
+            } while (timesChecked < timesToCheck);
 
-                logger.debug(
-                    { mint: poolKeys.baseMint.toString() },
-                    `${timesChecked}/${timesToCheck} Take profit: ${takeProfit.toFixed()}${stopLoss ? ' | Stop loss: ' + stopLoss.toFixed() : ''} | Current: ${amountOut.toFixed()}`,
-                );
 
-                if (stopLoss && amountOut.lt(stopLoss)) {
-                    this.stopLoss.delete(poolKeys.baseMint.toString());
-                    return true;
-                }
-
-                if (amountOut.gt(takeProfit)) {
-                    this.stopLoss.delete(poolKeys.baseMint.toString());
-                    return true;
-                }
-
-                await sleep(this.config.priceCheckInterval);
-            } catch (e) {
-                logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
-            } finally {
-                timesChecked++;
+            if (this.config.autoSellWithoutSellSignal) {
+                return true;
+            } else {
+                await this.messaging.sendTelegramMessage(`🚫NO SELL🚫\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nTime ran out, sell stopped, you're a bagholder now`, poolKeys.baseMint.toString())
+                return false;
             }
-        } while (timesChecked < timesToCheck);
-
-
-        if (this.config.autoSellWithoutSellSignal) {
-            return true;
-        } else {
-            await this.messaging.sendTelegramMessage(`🚫NO SELL🚫\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nTime ran out, sell stopped, you're a bagholder now`, poolKeys.baseMint.toString())
-            return false;
+        } finally {
+            this.activeSellMonitors.delete(mint);
         }
     }
 }

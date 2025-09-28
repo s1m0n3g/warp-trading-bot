@@ -3,7 +3,7 @@ import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
 import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
-import { AccountLayout, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { AccountLayout, RawAccount, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
 import {
@@ -346,6 +346,45 @@ const runListener = async () => {
     cacheNewMarkets: CACHE_NEW_MARKETS,
     enablePumpfun: ENABLE_PUMPFUN,
   });
+
+  if (AUTO_SELL) {
+    try {
+      const { value: existingTokenAccounts } = await connection.getTokenAccountsByOwner(wallet.publicKey, {
+        programId: TOKEN_PROGRAM_ID,
+      });
+
+      for (const { pubkey, account } of existingTokenAccounts) {
+        const accountData = AccountLayout.decode(account.data) as RawAccount;
+        const mint = accountData.mint.toString();
+
+        if (accountData.mint.equals(quoteToken.mint)) {
+          continue;
+        }
+
+        const balance = BigInt(accountData.amount.toString());
+        if (balance === 0n) {
+          continue;
+        }
+
+        const cachedPool = await poolCache.get(mint);
+
+        if (!cachedPool) {
+          logger.trace({ mint }, 'Skipping resume for token without cached pool data');
+          continue;
+        }
+
+        if (cachedPool.sold) {
+          logger.trace({ mint }, 'Skipping resume for token already marked as sold');
+          continue;
+        }
+
+        logger.info({ mint, account: pubkey.toBase58() }, 'Resuming sell monitoring for existing position');
+        void bot.sell(pubkey, accountData);
+      }
+    } catch (error) {
+      logger.error({ error }, 'Failed to resume monitoring existing token positions');
+    }
+  }
 
   const maxPreSwapVolume = resolveMaxPreSwapVolume(quoteToken);
   const maxPreSwapVolumeRaw = maxPreSwapVolume.raw;

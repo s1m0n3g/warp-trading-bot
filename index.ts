@@ -337,7 +337,7 @@ const runListener = async () => {
     await marketCache.init({ quoteToken });
   }
 
-  const runTimestamp = Math.floor(new Date().getTime() / 1000);
+  const runTimestamp = BigInt(Math.floor(new Date().getTime() / 1000));
   const listeners = new Listeners(connection);
   await listeners.start({
     walletPublicKey: wallet.publicKey,
@@ -367,7 +367,7 @@ const runListener = async () => {
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
     await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
-    const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
+    const poolOpenTime = BigInt(poolState.poolOpenTime.toString());
     const totalSwapVolume = poolState.swapBaseInAmount
       .add(poolState.swapBaseOutAmount)
       .add(poolState.swapQuoteInAmount)
@@ -377,7 +377,9 @@ const runListener = async () => {
     const quoteSwapVolume = poolState.swapQuoteInAmount.add(poolState.swapQuoteOutAmount);
 
 
-    if (!hasSwaps && poolOpenTime !== 0 && poolOpenTime < runTimestamp) {
+    const poolOpenTimeIsSentinel = poolOpenTime <= 0n;
+
+    if (!hasSwaps && !poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
       return;
     }
@@ -415,16 +417,34 @@ const runListener = async () => {
       );
     }
 
-    const currentTimestamp = Math.floor(new Date().getTime() / 1000);
-    const lag = poolOpenTime === 0 ? 0 : currentTimestamp - poolOpenTime;
+    const currentTimestamp = BigInt(Math.floor(new Date().getTime() / 1000));
+    let poolAge = 0n;
 
-    if (MAX_LAG !== 0 && lag > MAX_LAG) {
-      logger.trace(`Lag too high: ${lag} sec`);
-      return;
+    if (!poolOpenTimeIsSentinel) {
+      const rawAge = currentTimestamp - poolOpenTime;
+      poolAge = rawAge > 0n ? rawAge : 0n;
     }
 
-    logger.trace(`Lag: ${lag} sec`);
-    await bot.buy(snapshot, lag);
+    const maxLagEnabled = MAX_LAG !== 0;
+    const maxLagBigInt = BigInt(Math.max(0, Math.trunc(MAX_LAG)));
+
+    if (maxLagEnabled) {
+      if (poolOpenTimeIsSentinel) {
+        logger.trace({ mint: poolMint }, 'Skipping pool with invalid open time');
+        return;
+      }
+
+      if (poolAge > maxLagBigInt) {
+        logger.trace(`Lag too high: ${poolAge.toString()} sec`);
+        return;
+      }
+    }
+
+    const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
+    const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
+
+    logger.trace(`Lag: ${poolAge.toString()} sec`);
+    await bot.buy(snapshot, safeLag);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {

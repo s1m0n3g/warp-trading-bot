@@ -2,7 +2,13 @@ import BN from 'bn.js';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
-import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import {
+  LIQUIDITY_STATE_LAYOUT_V4,
+  MARKET_STATE_LAYOUT_V3,
+  LiquidityStateV4,
+  Token,
+  TokenAmount,
+} from '@raydium-io/raydium-sdk';
 import { AccountLayout, RawAccount, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
@@ -403,6 +409,11 @@ const runListener = async () => {
 
   const maxPreSwapVolume = resolveMaxPreSwapVolume(quoteToken);
   const maxPreSwapVolumeRaw = maxPreSwapVolume.raw;
+  const sanitizedMaxLag = Number.isFinite(MAX_LAG) ? MAX_LAG : 0;
+  const maxLagEnabled = sanitizedMaxLag !== 0;
+  const maxLagBigInt = BigInt(Math.max(0, Math.trunc(sanitizedMaxLag)));
+  const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
+  const seenPumpfunMints = new Set<string>();
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
     const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
@@ -410,7 +421,9 @@ const runListener = async () => {
   });
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
+    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(
+      updatedAccountInfo.accountInfo.data,
+    ) as LiquidityStateV4;
     const poolMint = poolState.baseMint.toString();
     const exists = await poolCache.get(poolMint);
 
@@ -429,11 +442,9 @@ const runListener = async () => {
 
     const hasSwaps = !totalSwapVolume.eqn(0);
     const quoteSwapVolume = poolState.swapQuoteInAmount.add(poolState.swapQuoteOutAmount);
-
-
     const poolOpenTimeIsSentinel = poolOpenTime <= 0n;
 
-    if (!hasSwaps && !poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
+    if (!poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
       return;
     }
@@ -445,13 +456,11 @@ const runListener = async () => {
       }
 
       if (quoteSwapVolume.gt(maxPreSwapVolumeRaw)) {
-
         logger.trace(
           {
             mint: poolMint,
             totalSwapVolume: totalSwapVolume.toString(),
             quoteSwapVolume: quoteSwapVolume.toString(),
-
             maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
           },
           'Skipping pool because swaps already occurred',
@@ -464,7 +473,6 @@ const runListener = async () => {
           mint: poolMint,
           totalSwapVolume: totalSwapVolume.toString(),
           quoteSwapVolume: quoteSwapVolume.toString(),
-
           maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
         },
         'Pool has swaps within allowed threshold; continuing',
@@ -479,9 +487,6 @@ const runListener = async () => {
       poolAge = rawAge > 0n ? rawAge : 0n;
     }
 
-    const maxLagEnabled = MAX_LAG !== 0;
-    const maxLagBigInt = BigInt(Math.max(0, Math.trunc(MAX_LAG)));
-
     if (maxLagEnabled) {
       if (poolOpenTimeIsSentinel) {
         logger.trace({ mint: poolMint }, 'Skipping pool with invalid open time');
@@ -494,7 +499,6 @@ const runListener = async () => {
       }
     }
 
-    const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
     const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
     logger.trace(`Lag: ${poolAge.toString()} sec`);
@@ -513,7 +517,58 @@ const runListener = async () => {
 
   if (ENABLE_PUMPFUN) {
     listeners.on('pumpfunPool', async (payload: PumpfunPoolEventPayload) => {
-      await bot.handlePumpfunPool(payload);
+      const mint = payload.mint.toBase58();
+
+      if (await poolCache.get(mint)) {
+        return;
+      }
+
+      if (seenPumpfunMints.has(mint)) {
+        return;
+      }
+
+      if (payload.state.complete) {
+        seenPumpfunMints.add(mint);
+        logger.trace({ mint }, 'Skipping pump.fun pool because bonding curve is complete');
+        return;
+      }
+
+      const goLiveUnixTime = BigInt(payload.state.goLiveUnixTime);
+      const goLiveIsSentinel = goLiveUnixTime <= 0n;
+
+      if (!goLiveIsSentinel && goLiveUnixTime < runTimestamp) {
+        seenPumpfunMints.add(mint);
+        logger.trace({ mint }, 'Skipping pump.fun pool created before bot started');
+        return;
+      }
+
+      const currentTimestamp = BigInt(Math.floor(new Date().getTime() / 1000));
+      let poolAge = 0n;
+
+      if (!goLiveIsSentinel) {
+        const rawAge = currentTimestamp - goLiveUnixTime;
+        poolAge = rawAge > 0n ? rawAge : 0n;
+      }
+
+      if (maxLagEnabled) {
+        if (goLiveIsSentinel) {
+          seenPumpfunMints.add(mint);
+          logger.trace({ mint }, 'Skipping pump.fun pool with invalid go live time');
+          return;
+        }
+
+        if (poolAge > maxLagBigInt) {
+          seenPumpfunMints.add(mint);
+          logger.trace(`Pump.fun lag too high: ${poolAge.toString()} sec`);
+          return;
+        }
+      }
+
+      const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
+
+      seenPumpfunMints.add(mint);
+      logger.trace(`Pump.fun lag: ${poolAge.toString()} sec`);
+      await bot.handlePumpfunPool(payload, safeLag);
     });
   }
 

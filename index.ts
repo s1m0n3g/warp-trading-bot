@@ -2,7 +2,13 @@ import BN from 'bn.js';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
-import { LIQUIDITY_STATE_LAYOUT_V4, MARKET_STATE_LAYOUT_V3, Token, TokenAmount } from '@raydium-io/raydium-sdk';
+import {
+  LIQUIDITY_STATE_LAYOUT_V4,
+  MARKET_STATE_LAYOUT_V3,
+  LiquidityStateV4,
+  Token,
+  TokenAmount,
+} from '@raydium-io/raydium-sdk';
 import { AccountLayout, RawAccount, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { Bot, BotConfig } from './bot';
 import { DefaultTransactionExecutor, TransactionExecutor } from './transactions';
@@ -403,24 +409,17 @@ const runListener = async () => {
 
   const maxPreSwapVolume = resolveMaxPreSwapVolume(quoteToken);
   const maxPreSwapVolumeRaw = maxPreSwapVolume.raw;
+  const sanitizedMaxLag = Number.isFinite(MAX_LAG) ? MAX_LAG : 0;
+  const maxLagEnabled = sanitizedMaxLag !== 0;
+  const maxLagBigInt = BigInt(Math.max(0, Math.trunc(sanitizedMaxLag)));
+  const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
+  type RaydiumEvaluationResult =
+    | { shouldProcess: false }
+    | { shouldProcess: true; lagSeconds: number; poolAge: bigint };
 
-  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
-    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
-    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
-  });
+  const seenRaydiumMints = new Set<string>();
 
-  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
-    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
-    const poolMint = poolState.baseMint.toString();
-    const exists = await poolCache.get(poolMint);
-
-    if (exists) {
-      return;
-    }
-
-    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
-
+  const evaluateRaydiumPool = (poolState: LiquidityStateV4, poolMint: string): RaydiumEvaluationResult => {
     const poolOpenTime = BigInt(poolState.poolOpenTime.toString());
     const totalSwapVolume = poolState.swapBaseInAmount
       .add(poolState.swapBaseOutAmount)
@@ -429,34 +428,30 @@ const runListener = async () => {
 
     const hasSwaps = !totalSwapVolume.eqn(0);
     const quoteSwapVolume = poolState.swapQuoteInAmount.add(poolState.swapQuoteOutAmount);
-
-
     const poolOpenTimeIsSentinel = poolOpenTime <= 0n;
 
     if (!hasSwaps && !poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
-      return;
+      return { shouldProcess: false };
     }
 
     if (hasSwaps) {
       if (maxPreSwapVolumeRaw.isZero()) {
         logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
-        return;
+        return { shouldProcess: false };
       }
 
       if (quoteSwapVolume.gt(maxPreSwapVolumeRaw)) {
-
         logger.trace(
           {
             mint: poolMint,
             totalSwapVolume: totalSwapVolume.toString(),
             quoteSwapVolume: quoteSwapVolume.toString(),
-
             maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
           },
           'Skipping pool because swaps already occurred',
         );
-        return;
+        return { shouldProcess: false };
       }
 
       logger.trace(
@@ -464,7 +459,6 @@ const runListener = async () => {
           mint: poolMint,
           totalSwapVolume: totalSwapVolume.toString(),
           quoteSwapVolume: quoteSwapVolume.toString(),
-
           maxPreSwapVolume: maxPreSwapVolumeRaw.toString(),
         },
         'Pool has swaps within allowed threshold; continuing',
@@ -479,26 +473,109 @@ const runListener = async () => {
       poolAge = rawAge > 0n ? rawAge : 0n;
     }
 
-    const maxLagEnabled = MAX_LAG !== 0;
-    const maxLagBigInt = BigInt(Math.max(0, Math.trunc(MAX_LAG)));
-
     if (maxLagEnabled) {
       if (poolOpenTimeIsSentinel) {
         logger.trace({ mint: poolMint }, 'Skipping pool with invalid open time');
-        return;
+        return { shouldProcess: false };
       }
 
       if (poolAge > maxLagBigInt) {
-        logger.trace(`Lag too high: ${poolAge.toString()} sec`);
-        return;
+        logger.trace(
+          { mint: poolMint, poolAge: poolAge.toString(), maxLag: maxLagBigInt.toString() },
+          'Skipping pool because lag too high',
+        );
+        return { shouldProcess: false };
       }
     }
 
-    const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
     const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
-    logger.trace(`Lag: ${poolAge.toString()} sec`);
-    await bot.buy(snapshot, safeLag);
+    return { shouldProcess: true, lagSeconds: safeLag, poolAge };
+  };
+
+  type PumpfunEvaluationResult =
+    | { shouldProcess: false }
+    | { shouldProcess: true; lagSeconds: number; poolAge: bigint };
+
+  const seenPumpfunMints = new Set<string>();
+
+  const evaluatePumpfunPool = (
+    payload: PumpfunPoolEventPayload,
+    mint: string,
+  ): PumpfunEvaluationResult => {
+    if (payload.state.complete) {
+      logger.trace({ mint }, 'Skipping pump.fun pool because bonding curve is complete');
+      return { shouldProcess: false };
+    }
+
+    const goLiveUnixTime = BigInt(payload.state.goLiveUnixTime);
+    const goLiveIsSentinel = goLiveUnixTime <= 0n;
+
+    if (!goLiveIsSentinel && goLiveUnixTime < runTimestamp) {
+      logger.trace({ mint }, 'Skipping pump.fun pool created before bot started');
+      return { shouldProcess: false };
+    }
+
+    const currentTimestamp = BigInt(Math.floor(new Date().getTime() / 1000));
+    let poolAge = 0n;
+
+    if (!goLiveIsSentinel) {
+      const rawAge = currentTimestamp - goLiveUnixTime;
+      poolAge = rawAge > 0n ? rawAge : 0n;
+    }
+
+    if (maxLagEnabled) {
+      if (goLiveIsSentinel) {
+        logger.trace({ mint }, 'Skipping pump.fun pool with invalid go live time');
+        return { shouldProcess: false };
+      }
+
+      if (poolAge > maxLagBigInt) {
+        logger.trace(
+          { mint, poolAge: poolAge.toString(), maxLag: maxLagBigInt.toString() },
+          'Skipping pump.fun pool because lag too high',
+        );
+        return { shouldProcess: false };
+      }
+    }
+
+    const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
+
+    return { shouldProcess: true, lagSeconds: safeLag, poolAge };
+  };
+
+  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
+    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
+    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
+  });
+
+  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
+    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(
+      updatedAccountInfo.accountInfo.data,
+    ) as LiquidityStateV4;
+    const poolMint = poolState.baseMint.toString();
+
+    if (await poolCache.get(poolMint)) {
+      return;
+    }
+
+    if (seenRaydiumMints.has(poolMint)) {
+      return;
+    }
+
+    const evaluation = evaluateRaydiumPool(poolState, poolMint);
+
+    if (!evaluation.shouldProcess) {
+      seenRaydiumMints.add(poolMint);
+      return;
+    }
+
+    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
+    seenRaydiumMints.add(poolMint);
+    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
+
+    logger.trace(`Lag: ${evaluation.poolAge.toString()} sec`);
+    await bot.buy(snapshot, evaluation.lagSeconds);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
@@ -513,7 +590,26 @@ const runListener = async () => {
 
   if (ENABLE_PUMPFUN) {
     listeners.on('pumpfunPool', async (payload: PumpfunPoolEventPayload) => {
-      await bot.handlePumpfunPool(payload);
+      const mint = payload.mint.toBase58();
+
+      if (await poolCache.get(mint)) {
+        return;
+      }
+
+      if (seenPumpfunMints.has(mint)) {
+        return;
+      }
+
+      const evaluation = evaluatePumpfunPool(payload, mint);
+
+      if (!evaluation.shouldProcess) {
+        seenPumpfunMints.add(mint);
+        return;
+      }
+
+      seenPumpfunMints.add(mint);
+      logger.trace(`Lag: ${evaluation.poolAge.toString()} sec`);
+      await bot.handlePumpfunPool(payload, evaluation.lagSeconds);
     });
   }
 

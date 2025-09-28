@@ -446,18 +446,19 @@ export class Bot {
             const signatureUrl = `https://solscan.io/tx/${result.signature}?cluster=${NETWORK}`;
             const dexUrl = `https://dexscreener.com/solana/${rawAccount.mint.toString()}?maker=${this.config.wallet.publicKey}`;
 
-            logger.info(
-              {
-                dex: dexUrl,
-                mint: rawAccount.mint.toString(),
-                signature: result.signature,
-                url: signatureUrl,
-                source,
-              },
-              `Confirmed sell tx`,
-            );
-            break;
-          }
+          logger.info(
+            {
+              dex: dexUrl,
+              mint: rawAccount.mint.toString(),
+              signature: result.signature,
+              url: signatureUrl,
+              source,
+            },
+            `Confirmed sell tx`,
+          );
+          await this.poolStorage.markAsSold(rawAccount.mint.toString());
+          break;
+        }
 
           logger.info(
             {

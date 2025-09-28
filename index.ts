@@ -434,6 +434,8 @@ const runListener = async () => {
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
     await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
+
+  const evaluateRaydiumPool = (poolState: LiquidityStateV4, poolMint: string): RaydiumEvaluationResult => {
     const poolOpenTime = BigInt(poolState.poolOpenTime.toString());
     const totalSwapVolume = poolState.swapBaseInAmount
       .add(poolState.swapBaseOutAmount)
@@ -446,13 +448,13 @@ const runListener = async () => {
 
     if (!poolOpenTimeIsSentinel && poolOpenTime < runTimestamp) {
       logger.trace({ mint: poolMint }, 'Skipping pool created before bot started');
-      return;
+      return { shouldProcess: false };
     }
 
     if (hasSwaps) {
       if (maxPreSwapVolumeRaw.isZero()) {
         logger.trace({ mint: poolMint }, 'Skipping pool because swaps already occurred');
-        return;
+        return { shouldProcess: false };
       }
 
       if (quoteSwapVolume.gt(maxPreSwapVolumeRaw)) {
@@ -465,7 +467,7 @@ const runListener = async () => {
           },
           'Skipping pool because swaps already occurred',
         );
-        return;
+        return { shouldProcess: false };
       }
 
       logger.trace(
@@ -490,19 +492,106 @@ const runListener = async () => {
     if (maxLagEnabled) {
       if (poolOpenTimeIsSentinel) {
         logger.trace({ mint: poolMint }, 'Skipping pool with invalid open time');
-        return;
+        return { shouldProcess: false };
       }
 
       if (poolAge > maxLagBigInt) {
-        logger.trace(`Lag too high: ${poolAge.toString()} sec`);
-        return;
+        logger.trace(
+          { mint: poolMint, poolAge: poolAge.toString(), maxLag: maxLagBigInt.toString() },
+          'Skipping pool because lag too high',
+        );
+        return { shouldProcess: false };
       }
     }
 
     const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
-    logger.trace(`Lag: ${poolAge.toString()} sec`);
-    await bot.buy(snapshot, safeLag);
+    return { shouldProcess: true, lagSeconds: safeLag, poolAge };
+  };
+
+  type PumpfunEvaluationResult =
+    | { shouldProcess: false }
+    | { shouldProcess: true; lagSeconds: number; poolAge: bigint };
+
+  const seenPumpfunMints = new Set<string>();
+
+  const evaluatePumpfunPool = (
+    payload: PumpfunPoolEventPayload,
+    mint: string,
+  ): PumpfunEvaluationResult => {
+    if (payload.state.complete) {
+      logger.trace({ mint }, 'Skipping pump.fun pool because bonding curve is complete');
+      return { shouldProcess: false };
+    }
+
+    const goLiveUnixTime = BigInt(payload.state.goLiveUnixTime);
+    const goLiveIsSentinel = goLiveUnixTime <= 0n;
+
+    if (!goLiveIsSentinel && goLiveUnixTime < runTimestamp) {
+      logger.trace({ mint }, 'Skipping pump.fun pool created before bot started');
+      return { shouldProcess: false };
+    }
+
+    const currentTimestamp = BigInt(Math.floor(new Date().getTime() / 1000));
+    let poolAge = 0n;
+
+    if (!goLiveIsSentinel) {
+      const rawAge = currentTimestamp - goLiveUnixTime;
+      poolAge = rawAge > 0n ? rawAge : 0n;
+    }
+
+    if (maxLagEnabled) {
+      if (goLiveIsSentinel) {
+        logger.trace({ mint }, 'Skipping pump.fun pool with invalid go live time');
+        return { shouldProcess: false };
+      }
+
+      if (poolAge > maxLagBigInt) {
+        logger.trace(
+          { mint, poolAge: poolAge.toString(), maxLag: maxLagBigInt.toString() },
+          'Skipping pump.fun pool because lag too high',
+        );
+        return { shouldProcess: false };
+      }
+    }
+
+    const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
+
+    return { shouldProcess: true, lagSeconds: safeLag, poolAge };
+  };
+
+  listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
+    const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
+    marketCache.save(updatedAccountInfo.accountId.toString(), marketState);
+  });
+
+  listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
+    const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(
+      updatedAccountInfo.accountInfo.data,
+    ) as LiquidityStateV4;
+    const poolMint = poolState.baseMint.toString();
+
+    if (await poolCache.get(poolMint)) {
+      return;
+    }
+
+    if (seenRaydiumMints.has(poolMint)) {
+      return;
+    }
+
+    const evaluation = evaluateRaydiumPool(poolState, poolMint);
+
+    if (!evaluation.shouldProcess) {
+      seenRaydiumMints.add(poolMint);
+      return;
+    }
+
+    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
+    seenRaydiumMints.add(poolMint);
+    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
+
+    logger.trace(`Lag: ${evaluation.poolAge.toString()} sec`);
+    await bot.buy(snapshot, evaluation.lagSeconds);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {
@@ -569,6 +658,7 @@ const runListener = async () => {
       seenPumpfunMints.add(mint);
       logger.trace(`Pump.fun lag: ${poolAge.toString()} sec`);
       await bot.handlePumpfunPool(payload, safeLag);
+
     });
   }
 

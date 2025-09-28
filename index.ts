@@ -413,8 +413,7 @@ const runListener = async () => {
   const maxLagEnabled = sanitizedMaxLag !== 0;
   const maxLagBigInt = BigInt(Math.max(0, Math.trunc(sanitizedMaxLag)));
   const maxSafeLag = BigInt(Number.MAX_SAFE_INTEGER);
-  const seenRaydiumMints = new Set<string>();
-  const seenPumpfunMints = new Set<string>();
+
 
   listeners.on('market', (updatedAccountInfo: KeyedAccountInfo) => {
     const marketState = MARKET_STATE_LAYOUT_V3.decode(updatedAccountInfo.accountInfo.data);
@@ -567,10 +566,6 @@ const runListener = async () => {
 
     const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
-    const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toString(), poolState);
-    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
-
-    seenRaydiumMints.add(poolMint);
     logger.trace({ mint: poolMint, lag: poolAge.toString() }, 'Lag within threshold');
     await bot.buy(snapshot, safeLag);
 
@@ -587,20 +582,27 @@ const runListener = async () => {
   });
 
   if (ENABLE_PUMPFUN) {
+    const seenPumpfunMints = new Set<string>();
+
     listeners.on('pumpfunPool', async (payload: PumpfunPoolEventPayload) => {
       const mint = payload.mint.toBase58();
 
-      if (await poolCache.get(mint)) {
+      if (seenPumpfunMints.has(mint)) {
+        logger.trace({ mint }, 'Skipping pump.fun pool because mint was already processed');
         return;
       }
 
-      if (seenPumpfunMints.has(mint)) {
+      if (await poolCache.get(mint)) {
+        logger.trace({ mint }, 'Skipping pump.fun pool because it is already cached');
+        seenPumpfunMints.add(mint);
+
         return;
       }
 
       if (payload.state.complete) {
-        seenPumpfunMints.add(mint);
         logger.trace({ mint }, 'Skipping pump.fun pool because bonding curve is complete');
+        seenPumpfunMints.add(mint);
+
         return;
       }
 
@@ -608,8 +610,9 @@ const runListener = async () => {
       const goLiveIsSentinel = goLiveUnixTime <= 0n;
 
       if (!goLiveIsSentinel && goLiveUnixTime < runTimestamp) {
-        seenPumpfunMints.add(mint);
         logger.trace({ mint }, 'Skipping pump.fun pool created before bot started');
+        seenPumpfunMints.add(mint);
+
         return;
       }
 
@@ -623,14 +626,15 @@ const runListener = async () => {
 
       if (maxLagEnabled) {
         if (goLiveIsSentinel) {
-          seenPumpfunMints.add(mint);
           logger.trace({ mint }, 'Skipping pump.fun pool with invalid go live time');
+          seenPumpfunMints.add(mint);
+
           return;
         }
 
         if (poolAge > maxLagBigInt) {
-          seenPumpfunMints.add(mint);
           logger.trace({ mint, lag: poolAge.toString() }, 'Pump.fun lag too high');
+          seenPumpfunMints.add(mint);
 
           return;
         }
@@ -638,8 +642,8 @@ const runListener = async () => {
 
       const safeLag = poolAge > maxSafeLag ? Number.MAX_SAFE_INTEGER : Number(poolAge);
 
-      seenPumpfunMints.add(mint);
       logger.trace({ mint, lag: poolAge.toString() }, 'Pump.fun lag within threshold');
+      seenPumpfunMints.add(mint);
       await bot.handlePumpfunPool(payload, safeLag);
 
     });

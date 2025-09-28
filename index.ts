@@ -395,6 +395,7 @@ const runListener = async () => {
         logger.debug({ mint }, 'Removing cached position because wallet token account is missing');
         await poolCache.remove(mint);
       }
+
     } catch (error) {
       logger.error({ error }, 'Failed to resume monitoring existing token positions');
     }

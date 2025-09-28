@@ -352,7 +352,6 @@ const runListener = async () => {
       const { value: existingTokenAccounts } = await connection.getTokenAccountsByOwner(wallet.publicKey, {
         programId: TOKEN_PROGRAM_ID,
       });
-
       const walletMints = new Set<string>();
 
       for (const { pubkey, account } of existingTokenAccounts) {
@@ -395,6 +394,7 @@ const runListener = async () => {
         logger.debug({ mint }, 'Marking cached position as sold because wallet token account is missing');
         await poolCache.markAsSold(mint);
       }
+
     } catch (error) {
       logger.error({ error }, 'Failed to resume monitoring existing token positions');
     }

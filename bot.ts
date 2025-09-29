@@ -364,9 +364,12 @@ export class Bot {
       for (let i = 0; i < this.config.maxSellRetries; i++) {
         try {
           if (i === 0) {
-            const shouldSell = await this.tradeSignals.waitForSellSignal(tokenAmountIn, poolKeys);
+            const decision = await this.tradeSignals.waitForSellSignal(tokenAmountIn, poolKeys);
 
-            if (!shouldSell) {
+            if (!decision.shouldSell) {
+              if ('reason' in decision && decision.reason === 'largeLoss') {
+                await this.poolStorage.markAsSold(rawAccount.mint.toString());
+              }
               return;
             }
           }

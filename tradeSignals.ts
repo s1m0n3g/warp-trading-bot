@@ -242,14 +242,22 @@ export class TradeSignals {
                         }
                     }
 
+                    const currentAmountNumber = parseFloat(amountOut.toFixed());
+                    const profitOrLossValue = currentAmountNumber - initialQuoteAmount;
+                    const percentageChange = initialQuoteAmount === 0
+                        ? 0
+                        : (profitOrLossValue / initialQuoteAmount) * 100;
+
                     if (this.config.skipSellingIfLostMoreThan > 0) {
                         const stopSellingFraction = this.config.quoteAmount
                             .mul(100 - this.config.skipSellingIfLostMoreThan)
                             .numerator.div(new BN(100));
 
                         const stopSellingAmount = new TokenAmount(this.config.quoteToken, stopSellingFraction, true);
+                        const exceededConfiguredLoss = amountOut.lt(stopSellingAmount)
+                            || percentageChange <= -this.config.skipSellingIfLostMoreThan;
 
-                        if (amountOut.lt(stopSellingAmount)) {
+                        if (exceededConfiguredLoss) {
                             logger.info(
                                 { mint: poolKeys.baseMint.toString() },
                                 `Token dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped. Initial: ${this.config.quoteAmount.toFixed()} | Current: ${amountOut.toFixed()}`,
@@ -261,12 +269,6 @@ export class TradeSignals {
                             return { shouldSell: false, reason: "largeLoss" };
                         }
                     }
-
-                    const currentAmountNumber = parseFloat(amountOut.toFixed());
-                    const profitOrLossValue = currentAmountNumber - initialQuoteAmount;
-                    const percentageChange = initialQuoteAmount === 0
-                        ? 0
-                        : (profitOrLossValue / initialQuoteAmount) * 100;
                     const statusLabel = profitOrLossValue >= 0 ? "🟢Profit" : "🔴Loss";
                     const signedAmount = `${profitOrLossValue >= 0 ? "+" : "-"}${Math.abs(profitOrLossValue).toFixed(5)} ${this.config.quoteToken.symbol}`;
                     const elapsed = this.formatDuration(Date.now() - monitorStartTime);

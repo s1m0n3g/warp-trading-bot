@@ -368,6 +368,7 @@ export class Bot {
 
             if (!decision.shouldSell) {
               if ('reason' in decision && decision.reason === 'largeLoss') {
+
                 await this.poolStorage.markAsSold(rawAccount.mint.toString());
               }
               return;

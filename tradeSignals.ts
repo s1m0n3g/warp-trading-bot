@@ -12,6 +12,10 @@ const EXCLUDED_MONITOR_MINTS = new Set([
     "11111111111111111111111111111111",
 ]);
 
+export type SellSignalDecision =
+    | { shouldSell: true }
+    | { shouldSell: false; reason: "timeout" | "largeLoss" };
+
 export class TradeSignals {
 
     private readonly TA: TechnicalAnalysis;
@@ -173,12 +177,12 @@ export class TradeSignals {
     }
 
 
-    public async waitForSellSignal(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4) {
+    public async waitForSellSignal(amountIn: TokenAmount, poolKeys: LiquidityPoolKeysV4): Promise<SellSignalDecision> {
         this.technicalAnalysisCache.markAsDone(poolKeys.baseMint.toString());
 
         const infiniteCheck = this.config.priceCheckDuration === 0;
         if (this.config.priceCheckInterval === 0) {
-            return true;
+            return { shouldSell: true };
         }
 
         const timesToCheck = infiniteCheck ? Number.POSITIVE_INFINITY : this.config.priceCheckDuration / this.config.priceCheckInterval;
@@ -254,7 +258,7 @@ export class TradeSignals {
                             await this.messaging.sendTelegramMessage(`🚨RUG RUG RUG🚨\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nToken dropped more than ${this.config.skipSellingIfLostMoreThan}%, sell stopped\nInitial: <code>${this.config.quoteAmount.toFixed()}</code>\nCurrent: <code>${amountOut.toFixed()}</code>`, poolKeys.baseMint.toString())
 
                             this.stopLoss.delete(poolKeys.baseMint.toString());
-                            return false;
+                            return { shouldSell: false, reason: "largeLoss" };
                         }
                     }
 
@@ -289,12 +293,12 @@ export class TradeSignals {
 
                     if (stopLoss && amountOut.lt(stopLoss)) {
                         this.stopLoss.delete(poolKeys.baseMint.toString());
-                        return true;
+                        return { shouldSell: true };
                     }
 
                     if (amountOut.gt(takeProfit)) {
                         this.stopLoss.delete(poolKeys.baseMint.toString());
-                        return true;
+                        return { shouldSell: true };
                     }
 
                     await sleep(this.config.priceCheckInterval);
@@ -307,10 +311,10 @@ export class TradeSignals {
 
 
             if (this.config.autoSellWithoutSellSignal) {
-                return true;
+                return { shouldSell: true };
             } else {
                 await this.messaging.sendTelegramMessage(`🚫NO SELL🚫\n\nMint <code>${poolKeys.baseMint.toString()}</code>\nTime ran out, sell stopped, you're a bagholder now`, poolKeys.baseMint.toString())
-                return false;
+                return { shouldSell: false, reason: "timeout" };
             }
         } finally {
             this.activeSellMonitors.delete(mint);

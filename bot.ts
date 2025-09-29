@@ -367,7 +367,8 @@ export class Bot {
             const decision = await this.tradeSignals.waitForSellSignal(tokenAmountIn, poolKeys);
 
             if (!decision.shouldSell) {
-              if (decision.reason === 'largeLoss') {
+              if ('reason' in decision && decision.reason === 'largeLoss') {
+
                 await this.poolStorage.markAsSold(rawAccount.mint.toString());
               }
               return;

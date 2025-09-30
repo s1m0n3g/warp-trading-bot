@@ -21,6 +21,7 @@ export class TradeSignals {
     private readonly TA: TechnicalAnalysis;
     private readonly stopLoss = new Map<string, TokenAmount>();
     private readonly activeSellMonitors = new Map<string, number>();
+    private readonly tokensToIncinerate = new Set<string>();
 
     constructor(
         private readonly connection: Connection,
@@ -35,6 +36,10 @@ export class TradeSignals {
         let count = 0;
 
         for (const mint of this.activeSellMonitors.keys()) {
+            if (this.tokensToIncinerate.has(mint)) {
+                continue;
+            }
+
             if (EXCLUDED_MONITOR_MINTS.has(mint)) {
                 continue;
             }
@@ -206,6 +211,16 @@ export class TradeSignals {
         const slippage = new Percent(this.config.sellSlippage, 100);
         let timesChecked = 0;
         const mint = poolKeys.baseMint.toString();
+
+        if (this.tokensToIncinerate.has(mint)) {
+            logger.debug(
+                { mint },
+                `Skipping price monitoring because token is scheduled for incineration`,
+            );
+            this.stopLoss.delete(mint);
+            return { shouldSell: false, reason: "largeLoss" };
+        }
+
         const monitorStartTime = this.activeSellMonitors.get(mint) ?? Date.now();
         this.activeSellMonitors.set(mint, monitorStartTime);
         const initialQuoteAmount = parseFloat(this.config.quoteAmount.toFixed());
@@ -247,6 +262,21 @@ export class TradeSignals {
                     const percentageChange = initialQuoteAmount === 0
                         ? 0
                         : (profitOrLossValue / initialQuoteAmount) * 100;
+
+                    if (percentageChange <= -90) {
+                        this.tokensToIncinerate.add(mint);
+                        this.stopLoss.delete(mint);
+
+                        logger.info(
+                            {
+                                mint,
+                                tokensToIncinerate: Array.from(this.tokensToIncinerate.values()),
+                            },
+                            `Token dropped by ${percentageChange.toFixed(2)}%, excluded from price monitoring. Tokens to incinerate logged separately`,
+                        );
+
+                        return { shouldSell: false, reason: "largeLoss" };
+                    }
 
                     if (this.config.skipSellingIfLostMoreThan > 0) {
                         const stopSellingFraction = this.config.quoteAmount

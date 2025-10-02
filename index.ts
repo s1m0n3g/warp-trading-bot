@@ -76,6 +76,9 @@ import {
   USE_TELEGRAM,
   USE_TA,
   ENABLE_PUMPFUN,
+  PUMPFUN_MAX_TOKENS_AT_THE_TIME,
+  PUMPFUN_TAKE_PROFIT,
+  DEFAULT_PUMPFUN_TAKE_PROFIT,
 } from './helpers';
 import type { PumpfunPoolEventPayload } from './helpers';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -195,6 +198,12 @@ function printDetails(
   logger.info(`Pump.fun listener enabled: ${botConfig.enablePumpfun}`);
   logger.info(`Telegram notifications: ${botConfig.useTelegram}`);
 
+  if (botConfig.enablePumpfun) {
+    logger.info(
+      `Pump.fun aggressive scalp overrides -> max tokens at once: ${botConfig.maxTokensAtTheTime}, take profit: ${botConfig.takeProfit}%`,
+    );
+  }
+
   if (botConfig.useTelegram) {
     logger.info(`Telegram chat id: ${botConfig.telegramChatId}`);
   }
@@ -284,6 +293,17 @@ const runListener = async () => {
 
   const wallet = getWallet(PRIVATE_KEY.trim());
   const quoteToken = getToken(QUOTE_MINT);
+  const pumpfunMaxTokensOverride =
+    PUMPFUN_MAX_TOKENS_AT_THE_TIME !== undefined
+      ? Math.max(Math.floor(PUMPFUN_MAX_TOKENS_AT_THE_TIME), 1)
+      : undefined;
+  const resolvedMaxTokensAtTheTime = ENABLE_PUMPFUN
+    ? pumpfunMaxTokensOverride ?? Math.max(MAX_TOKENS_AT_THE_TIME, 5)
+    : MAX_TOKENS_AT_THE_TIME;
+  const resolvedTakeProfit = ENABLE_PUMPFUN
+    ? PUMPFUN_TAKE_PROFIT ?? DEFAULT_PUMPFUN_TAKE_PROFIT
+    : TAKE_PROFIT;
+
   const botConfig = <BotConfig>{
     wallet,
     quoteAta: getAssociatedTokenAddressSync(quoteToken.mint, wallet.publicKey),
@@ -291,7 +311,7 @@ const runListener = async () => {
     maxPoolSize: new TokenAmount(quoteToken, MAX_POOL_SIZE, false),
     quoteToken,
     quoteAmount: new TokenAmount(quoteToken, QUOTE_AMOUNT, false),
-    maxTokensAtTheTime: MAX_TOKENS_AT_THE_TIME,
+    maxTokensAtTheTime: resolvedMaxTokensAtTheTime,
     useSnipeList: USE_SNIPE_LIST,
     autoSell: AUTO_SELL,
     autoSellDelay: AUTO_SELL_DELAY,
@@ -300,7 +320,7 @@ const runListener = async () => {
     maxBuyRetries: MAX_BUY_RETRIES,
     unitLimit: COMPUTE_UNIT_LIMIT,
     unitPrice: COMPUTE_UNIT_PRICE,
-    takeProfit: TAKE_PROFIT,
+    takeProfit: resolvedTakeProfit,
     stopLoss: STOP_LOSS,
     trailingStopLoss: TRAILING_STOP_LOSS,
     skipSellingIfLostMoreThan: SKIP_SELLING_IF_LOST_MORE_THAN,

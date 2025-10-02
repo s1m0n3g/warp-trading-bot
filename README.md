@@ -37,6 +37,8 @@ You should see the following output:
 
 - `LOG_LEVEL` - Set logging level, e.g., `info`, `debug`, `trace`, etc.
 - `MAX_TOKENS_AT_THE_TIME` - Set to `1` to process buying one token at a time.
+- `PUMPFUN_MAX_TOKENS_AT_THE_TIME` *(optional)* - Override the limit above when `ENABLE_PUMPFUN=true`.
+  - Defaults to `5` concurrent pump.fun tokens when unset, or keeps your global limit if that is already higher.
 - `COMPUTE_UNIT_LIMIT` - Compute limit used to calculate fees.
 - `COMPUTE_UNIT_PRICE` - Compute price used to calculate fees.
 - `PRE_LOAD_EXISTING_MARKETS` - Bot will load all existing markets in memory on start.
@@ -81,6 +83,8 @@ You should see the following output:
   - Set to `0` to keep monitoring prices indefinitely without auto-selling.
 - `TAKE_PROFIT` - Percentage profit at which to take profit.
   - Take profit is calculated based on quote mint.
+- `PUMPFUN_TAKE_PROFIT` *(optional)* - Override take profit when `ENABLE_PUMPFUN=true`.
+  - Defaults to a more aggressive `35%` when unset.
 - `STOP_LOSS` - Percentage loss at which to stop the loss.
   - Stop loss is calculated based on quote mint.
 - `TRAILING_STOP_LOSS` - Set to `true` to use trailing stop loss.

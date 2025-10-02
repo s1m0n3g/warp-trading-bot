@@ -14,6 +14,29 @@ const retrieveEnvVariable = (variableName: string, logger: Logger) => {
   return variable;
 };
 
+const retrieveOptionalNumber = (variableName: string, logger: Logger) => {
+  const rawValue = process.env[variableName];
+
+  if (rawValue === undefined) {
+    return undefined;
+  }
+
+  const trimmed = rawValue.trim();
+
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+
+  if (Number.isNaN(parsed)) {
+    logger.warn(`${variableName} has an invalid value of "${rawValue}". Ignoring override.`);
+    return undefined;
+  }
+
+  return parsed;
+};
+
 // Wallet
 export const PRIVATE_KEY = retrieveEnvVariable('PRIVATE_KEY', logger);
 
@@ -38,6 +61,12 @@ export const MAX_PRE_SWAP_VOLUME_IN_QUOTE = process.env.MAX_PRE_SWAP_VOLUME_IN_Q
 export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
 export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
 export const ENABLE_PUMPFUN = (process.env.ENABLE_PUMPFUN ?? 'false') === 'true';
+export const PUMPFUN_MAX_TOKENS_AT_THE_TIME = retrieveOptionalNumber(
+  'PUMPFUN_MAX_TOKENS_AT_THE_TIME',
+  logger,
+);
+export const PUMPFUN_TAKE_PROFIT = retrieveOptionalNumber('PUMPFUN_TAKE_PROFIT', logger);
+export const DEFAULT_PUMPFUN_TAKE_PROFIT = 35;
 
 // Buy
 export const AUTO_BUY_DELAY = Number(retrieveEnvVariable('AUTO_BUY_DELAY', logger));

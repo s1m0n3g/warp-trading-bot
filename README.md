@@ -92,7 +92,15 @@ You should see the following output:
   - This config is useful if you find yourself in a situation when rugpull happen, and you failed to sell. In this case there is a big loss of value, and sometimes it's more beneficial to keep the token, instead of selling it for almost nothing.
 - `SELL_SLIPPAGE` - Slippage %.
 - `AUTO_SELL_WITHOUT_SELL_SIGNAL` - Set `false` to keep holding tokens in case didn't find sell signal
-- `KEEP_5_PERCENT_FOR_MOONSHOTS` - Keep 5% of token. WARNING: consider token account rent expenses and TAKE_PROFIT and STOP_LOSS is skewed by small amount. 
+- `KEEP_5_PERCENT_FOR_MOONSHOTS` - Keep 5% of token. WARNING: consider token account rent expenses and TAKE_PROFIT and STOP_LOSS is skewed by small amount.
+
+##### Example risk management preset
+
+- `STOP_LOSS=30` – limits potential losses by exiting positions once they retrace more than 30% from the entry price.
+- `TAKE_PROFIT=80` – secures gains when the position appreciates by roughly 80%.
+- `PRICE_CHECK_INTERVAL=5000` – keeps the profit/loss evaluation cadence close to every 5 seconds.
+- `MAX_LAG=15` – ignores pools whose on-chain open time is more than 15 seconds old, ensuring only very recent tokens are considered.
+- `SKIP_SELLING_IF_LOST_MORE_THAN=90` – stops monitoring tokens that have collapsed by over 90% so new opportunities can be tracked without delays.
 
 #### Snipe list
 

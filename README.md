@@ -101,6 +101,7 @@ You should see the following output:
 - `PRICE_CHECK_INTERVAL=5000` – keeps the profit/loss evaluation cadence close to every 5 seconds.
 - `MAX_LAG=15` – ignores pools whose on-chain open time is more than 15 seconds old, ensuring only very recent tokens are considered.
 - `SKIP_SELLING_IF_LOST_MORE_THAN=90` – stops monitoring tokens that have collapsed by over 90% so new opportunities can be tracked without delays.
+- `MAX_PRE_SWAP_VOLUME_IN_QUOTE=0.1` – allows entries only while fewer than roughly 0.1 quote tokens have been traded, keeping the bot focused on fresh, low-competition pools.
 
 #### Snipe list
 

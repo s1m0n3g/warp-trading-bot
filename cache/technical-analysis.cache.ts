@@ -26,6 +26,8 @@ export class TechnicalAnalysisCache_Entity {
   }[];
 }
 
+const MAX_PRICE_POINTS = 1200; // keep roughly ten minutes of data at the 500 ms polling cadence
+
 export class TechnicalAnalysisCache {
   private readonly data: Map<string, TechnicalAnalysisCache_Entity> = new Map<string, TechnicalAnalysisCache_Entity>();
 
@@ -65,7 +67,7 @@ export class TechnicalAnalysisCache {
     let cached = this.data.get(mint);
     cached.extendExpiryTime();
     this.set(mint, cached);
-    return cached.prices.sort((a, b) => a.date.getTime() - b.date.getTime()).map(p => p.value);
+    return cached.prices.map((p) => p.value);
   }
 
   public async markAsDone(mint: string) {
@@ -109,6 +111,10 @@ export class TechnicalAnalysisCache {
 
         if (cached.prices.length === 0 || parseFloat(tokenPriceBN.toFixed(16)) !== cached.prices[cached.prices.length - 1].value) {
           cached.prices.push({ value: parseFloat(tokenPriceBN.toFixed(16)), date: currentTime });
+
+          if (cached.prices.length > MAX_PRICE_POINTS) {
+            cached.prices.splice(0, cached.prices.length - MAX_PRICE_POINTS);
+          }
         }
 
         this.set(mint, cached);

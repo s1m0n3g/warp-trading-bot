@@ -183,7 +183,7 @@ function printDetails(
   logger.info(`Using transaction executor: ${TRANSACTION_EXECUTOR}`);
 
   if (bot.isWarp || bot.isJito) {
-    logger.info(`${TRANSACTION_EXECUTOR} fee: ${CUSTOM_FEE}`);
+    logger.info(`${TRANSACTION_EXECUTOR} fee: ${CUSTOM_FEE ?? 'not configured'}`);
   } else {
     logger.info(`Compute Unit limit: ${botConfig.unitLimit}`);
     logger.info(`Compute Unit price (micro lamports): ${botConfig.unitPrice}`);
@@ -274,15 +274,23 @@ const runListener = async () => {
   await poolCache.init();
   const technicalAnalysisCache = new TechnicalAnalysisCache();
 
+  const customFee = CUSTOM_FEE;
+  const requiresCustomFee = TRANSACTION_EXECUTOR === 'warp' || TRANSACTION_EXECUTOR === 'jito';
+
+  if (requiresCustomFee && !customFee) {
+    logger.error(`CUSTOM_FEE must be set when using the ${TRANSACTION_EXECUTOR} transaction executor.`);
+    process.exit(1);
+  }
+
   let txExecutor: TransactionExecutor;
 
   switch (TRANSACTION_EXECUTOR) {
     case 'warp': {
-      txExecutor = new WarpTransactionExecutor(CUSTOM_FEE);
+      txExecutor = new WarpTransactionExecutor(customFee!);
       break;
     }
     case 'jito': {
-      txExecutor = new JitoTransactionExecutor(CUSTOM_FEE, connection);
+      txExecutor = new JitoTransactionExecutor(customFee!, connection);
       break;
     }
     default: {

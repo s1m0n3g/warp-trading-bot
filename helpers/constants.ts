@@ -14,6 +14,23 @@ const retrieveEnvVariable = (variableName: string, logger: Logger) => {
   return variable;
 };
 
+const retrieveOptionalEnvVariable = (variableName: string, logger: Logger) => {
+  const value = process.env[variableName];
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    logger.warn(`${variableName} is set but empty; ignoring value.`);
+    return undefined;
+  }
+
+  return trimmed;
+};
+
 const retrieveOptionalNumber = (variableName: string, logger: Logger) => {
   const rawValue = process.env[variableName];
 
@@ -54,7 +71,7 @@ export const COMPUTE_UNIT_PRICE = Number(retrieveEnvVariable('COMPUTE_UNIT_PRICE
 export const PRE_LOAD_EXISTING_MARKETS = retrieveEnvVariable('PRE_LOAD_EXISTING_MARKETS', logger) === 'true';
 export const CACHE_NEW_MARKETS = retrieveEnvVariable('CACHE_NEW_MARKETS', logger) === 'true';
 export const TRANSACTION_EXECUTOR = retrieveEnvVariable('TRANSACTION_EXECUTOR', logger);
-export const CUSTOM_FEE = retrieveEnvVariable('CUSTOM_FEE', logger);
+export const CUSTOM_FEE = retrieveOptionalEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
 export const MAX_PRE_SWAP_VOLUME_RAW = process.env.MAX_PRE_SWAP_VOLUME;
 export const MAX_PRE_SWAP_VOLUME_IN_QUOTE = process.env.MAX_PRE_SWAP_VOLUME_IN_QUOTE;

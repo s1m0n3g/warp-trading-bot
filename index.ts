@@ -96,6 +96,54 @@ type ResolvedMaxPreSwapVolume = {
   display: string;
 };
 
+class BoundedStringSet {
+  private readonly items = new Set<string>();
+  private readonly order: string[] = [];
+
+  constructor(private readonly maxSize: number) {}
+
+  has(value: string): boolean {
+    return this.items.has(value);
+  }
+
+  add(value: string): void {
+    if (this.items.has(value)) {
+      return;
+    }
+
+    this.items.add(value);
+
+    if (!Number.isFinite(this.maxSize) || this.maxSize <= 0) {
+      return;
+    }
+
+    this.order.push(value);
+
+    if (this.order.length <= this.maxSize) {
+      return;
+    }
+
+    const oldest = this.order.shift();
+
+    if (oldest !== undefined) {
+      this.items.delete(oldest);
+    }
+  }
+}
+
+const DEFAULT_MAX_SEEN_RAYDIUM_MINTS = 5_000;
+const DEFAULT_MAX_SEEN_PUMPFUN_MINTS = 20_000;
+
+const MAX_SEEN_RAYDIUM_MINTS =
+  MARKET_CACHE_MAX_ENTRIES && MARKET_CACHE_MAX_ENTRIES > 0
+    ? Math.max(MARKET_CACHE_MAX_ENTRIES, DEFAULT_MAX_SEEN_RAYDIUM_MINTS)
+    : DEFAULT_MAX_SEEN_RAYDIUM_MINTS;
+
+const MAX_SEEN_PUMPFUN_MINTS = Math.max(
+  DEFAULT_MAX_SEEN_PUMPFUN_MINTS,
+  MAX_SEEN_RAYDIUM_MINTS * 2,
+);
+
 function resolveMaxPreSwapVolume(quoteToken: Token): ResolvedMaxPreSwapVolume {
   const quoteThreshold = MAX_PRE_SWAP_VOLUME_IN_QUOTE?.trim();
   const rawThreshold = MAX_PRE_SWAP_VOLUME_RAW?.trim();
@@ -194,6 +242,8 @@ function printDetails(
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
   logger.info(`Market cache max entries: ${MARKET_CACHE_MAX_ENTRIES ?? 'unlimited'}`);
+  logger.info(`Raydium mint deduplication limit: ${MAX_SEEN_RAYDIUM_MINTS}`);
+  logger.info(`pump.fun mint deduplication limit: ${MAX_SEEN_PUMPFUN_MINTS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
   logger.info(`Max pre swap volume: ${maxPreSwapVolume.display}`);
@@ -448,7 +498,7 @@ const runListener = async () => {
     | { shouldProcess: false }
     | { shouldProcess: true; lagSeconds: number; poolAge: bigint };
 
-  const seenRaydiumMints = new Set<string>();
+  const seenRaydiumMints = new BoundedStringSet(MAX_SEEN_RAYDIUM_MINTS);
 
   const evaluateRaydiumPool = (poolState: LiquidityStateV4, poolMint: string): RaydiumEvaluationResult => {
     const poolOpenTime = BigInt(poolState.poolOpenTime.toString());
@@ -534,7 +584,7 @@ const runListener = async () => {
     | { shouldProcess: false }
     | { shouldProcess: true; lagSeconds: number; poolAge: bigint };
 
-  const seenPumpfunMints = new Set<string>();
+  const seenPumpfunMints = new BoundedStringSet(MAX_SEEN_PUMPFUN_MINTS);
 
   const evaluatePumpfunPool = (
     payload: PumpfunPoolEventPayload,

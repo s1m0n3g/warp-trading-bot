@@ -131,12 +131,16 @@ class BoundedStringSet {
   }
 }
 
+const DEFAULT_MAX_MARKET_CACHE_ENTRIES = 5_000;
 const DEFAULT_MAX_SEEN_RAYDIUM_MINTS = 5_000;
 const DEFAULT_MAX_SEEN_PUMPFUN_MINTS = 20_000;
 
+const resolvedMarketCacheMaxEntries =
+  MARKET_CACHE_MAX_ENTRIES === undefined ? DEFAULT_MAX_MARKET_CACHE_ENTRIES : MARKET_CACHE_MAX_ENTRIES;
+
 const MAX_SEEN_RAYDIUM_MINTS =
-  MARKET_CACHE_MAX_ENTRIES && MARKET_CACHE_MAX_ENTRIES > 0
-    ? Math.max(MARKET_CACHE_MAX_ENTRIES, DEFAULT_MAX_SEEN_RAYDIUM_MINTS)
+  resolvedMarketCacheMaxEntries > 0
+    ? Math.max(resolvedMarketCacheMaxEntries, DEFAULT_MAX_SEEN_RAYDIUM_MINTS)
     : DEFAULT_MAX_SEEN_RAYDIUM_MINTS;
 
 const MAX_SEEN_PUMPFUN_MINTS = Math.max(
@@ -321,7 +325,7 @@ const runListener = async () => {
   logger.level = LOG_LEVEL;
   logger.info('Bot is starting...');
 
-  const marketCache = new MarketCache(connection, MARKET_CACHE_MAX_ENTRIES);
+  const marketCache = new MarketCache(connection, resolvedMarketCacheMaxEntries);
   const poolCache = new PoolCache();
   await poolCache.init();
   const technicalAnalysisCache = new TechnicalAnalysisCache();

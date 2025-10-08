@@ -43,6 +43,8 @@ You should see the following output:
 - `COMPUTE_UNIT_PRICE` - Compute price used to calculate fees.
 - `PRE_LOAD_EXISTING_MARKETS` - Bot will load all existing markets in memory on start.
   - This option should not be used with public RPC.
+- `MARKET_CACHE_MAX_ENTRIES` *(optional)* - Upper bound for how many markets are retained in memory at once when caching.
+  - Useful on low-memory machines; the oldest cached market is evicted whenever the limit is exceeded.
 - `CACHE_NEW_MARKETS` - Set to `true` to cache new markets.
   - This option should not be used with public RPC.
 - `TRANSACTION_EXECUTOR` - Set to `warp` to use warp infrastructure for executing transactions, or set it to jito to use JSON-RPC jito executer

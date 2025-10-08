@@ -75,6 +75,7 @@ export const CUSTOM_FEE = retrieveOptionalEnvVariable('CUSTOM_FEE', logger);
 export const MAX_LAG = Number(retrieveEnvVariable('MAX_LAG', logger));
 export const MAX_PRE_SWAP_VOLUME_RAW = process.env.MAX_PRE_SWAP_VOLUME;
 export const MAX_PRE_SWAP_VOLUME_IN_QUOTE = process.env.MAX_PRE_SWAP_VOLUME_IN_QUOTE;
+export const MARKET_CACHE_MAX_ENTRIES = retrieveOptionalNumber('MARKET_CACHE_MAX_ENTRIES', logger);
 export const USE_TELEGRAM = retrieveEnvVariable('USE_TELEGRAM', logger) === 'true';
 export const USE_TA = retrieveEnvVariable('USE_TA', logger) === 'true';
 export const ENABLE_PUMPFUN = (process.env.ENABLE_PUMPFUN ?? 'false') === 'true';

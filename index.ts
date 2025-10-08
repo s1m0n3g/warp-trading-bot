@@ -79,6 +79,7 @@ import {
   PUMPFUN_MAX_TOKENS_AT_THE_TIME,
   PUMPFUN_TAKE_PROFIT,
   DEFAULT_PUMPFUN_TAKE_PROFIT,
+  MARKET_CACHE_MAX_ENTRIES,
 } from './helpers';
 import type { PumpfunPoolEventPayload } from './helpers';
 import { WarpTransactionExecutor } from './transactions/warp-transaction-executor';
@@ -192,6 +193,7 @@ function printDetails(
   logger.info(`Max tokens at the time: ${botConfig.maxTokensAtTheTime}`);
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
+  logger.info(`Market cache max entries: ${MARKET_CACHE_MAX_ENTRIES ?? 'unlimited'}`);
   logger.info(`Log level: ${LOG_LEVEL}`);
   logger.info(`Max lag: ${MAX_LAG}`);
   logger.info(`Max pre swap volume: ${maxPreSwapVolume.display}`);
@@ -269,7 +271,7 @@ const runListener = async () => {
   logger.level = LOG_LEVEL;
   logger.info('Bot is starting...');
 
-  const marketCache = new MarketCache(connection);
+  const marketCache = new MarketCache(connection, MARKET_CACHE_MAX_ENTRIES);
   const poolCache = new PoolCache();
   await poolCache.init();
   const technicalAnalysisCache = new TechnicalAnalysisCache();

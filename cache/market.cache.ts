@@ -1,6 +1,7 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getMinimalMarketV3, logger, sleep, MINIMAL_MARKET_STATE_LAYOUT_V3, MinimalMarketLayoutV3 } from '../helpers';
 import { MAINNET_PROGRAM_ID, MARKET_STATE_LAYOUT_V3, Token } from '@raydium-io/raydium-sdk';
+import bs58 from 'bs58';
 
 export class MarketCache {
   private readonly keys: Map<string, MinimalMarketLayoutV3> = new Map<string, MinimalMarketLayoutV3>();
@@ -9,27 +10,58 @@ export class MarketCache {
   async init(config: { quoteToken: Token }) {
     logger.debug({}, `Fetching all existing ${config.quoteToken.symbol} markets...`);
 
-    const accounts = await this.connection.getProgramAccounts(MAINNET_PROGRAM_ID.OPENBOOK_MARKET, {
-      commitment: this.connection.commitment,
-      dataSlice: {
-        offset: MARKET_STATE_LAYOUT_V3.offsetOf('eventQueue'),
-        length: MINIMAL_MARKET_STATE_LAYOUT_V3.span,
+    const baseFilters = [
+      { dataSize: MARKET_STATE_LAYOUT_V3.span },
+      {
+        memcmp: {
+          offset: MARKET_STATE_LAYOUT_V3.offsetOf('quoteMint'),
+          bytes: config.quoteToken.mint.toBase58(),
+        },
       },
-      filters: [
-        { dataSize: MARKET_STATE_LAYOUT_V3.span },
+    ];
+
+    const baseMintOffset = MARKET_STATE_LAYOUT_V3.offsetOf('baseMint');
+
+    for (let prefix = 0; prefix <= 0xff; prefix++) {
+      if (this.hasReachedCapacity()) {
+        logger.debug(
+          {
+            limit: this.maxEntries,
+            cachedMarkets: this.keys.size,
+          },
+          'Reached market cache capacity while preloading; stopping early.',
+        );
+        break;
+      }
+
+      const filters = [
+        ...baseFilters,
         {
           memcmp: {
-            offset: MARKET_STATE_LAYOUT_V3.offsetOf('quoteMint'),
-            bytes: config.quoteToken.mint.toBase58(),
+            offset: baseMintOffset,
+            bytes: bs58.encode(Buffer.from([prefix])),
           },
         },
-      ],
-    });
+      ];
 
-    for (const account of accounts) {
-      const market = MINIMAL_MARKET_STATE_LAYOUT_V3.decode(account.account.data);
-      this.keys.set(account.pubkey.toString(), market);
-      this.enforceSizeLimit();
+      const accounts = await this.connection.getProgramAccounts(MAINNET_PROGRAM_ID.OPENBOOK_MARKET, {
+        commitment: this.connection.commitment,
+        dataSlice: {
+          offset: MARKET_STATE_LAYOUT_V3.offsetOf('eventQueue'),
+          length: MINIMAL_MARKET_STATE_LAYOUT_V3.span,
+        },
+        filters,
+      });
+
+      for (const account of accounts) {
+        const market = MINIMAL_MARKET_STATE_LAYOUT_V3.decode(account.account.data);
+        this.keys.set(account.pubkey.toString(), market);
+        this.enforceSizeLimit();
+
+        if (this.hasReachedCapacity()) {
+          break;
+        }
+      }
     }
 
     logger.debug({}, `Cached ${this.keys.size} markets`);
@@ -94,5 +126,9 @@ export class MarketCache {
         'Evicted market from cache to respect MARKET_CACHE_MAX_ENTRIES',
       );
     }
+  }
+
+  private hasReachedCapacity(): boolean {
+    return !!this.maxEntries && this.maxEntries > 0 && this.keys.size >= this.maxEntries;
   }
 }

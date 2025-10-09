@@ -80,20 +80,20 @@ export class TradeSignals {
     }
 
     public async waitForBuySignal(poolKeys: LiquidityPoolKeysV4) {
-        
-        if(!this.config.useTechnicalAnalysis){
+        if (!this.config.useTechnicalAnalysis) {
             return true;
         }
 
-        this.technicalAnalysisCache.addNew(poolKeys.baseMint.toString(), poolKeys);
+        const mint = poolKeys.baseMint.toString();
+        this.technicalAnalysisCache.addNew(mint, poolKeys);
 
-        logger.trace({ mint: poolKeys.baseMint.toString() }, `Waiting for buy signal`);
+        logger.trace({ mint }, `Waiting for buy signal`);
 
         const totalTimeToCheck = this.config.buySignalTimeToWait;
         const interval = this.config.buySignalPriceInterval;
-        const maxSignalWaitTime = totalTimeToCheck * (this.config.buySignalFractionPercentageTimeToWait / 100)
+        const maxSignalWaitTime = totalTimeToCheck * (this.config.buySignalFractionPercentageTimeToWait / 100);
 
-        //used strategy
+        // used strategy
         let strategy = 1;
 
         let startTime = Date.now();
@@ -101,30 +101,31 @@ export class TradeSignals {
 
         let previousRSI = null;
 
-        do {
-            try {
+        try {
+            do {
+                try {
 
-                let prices = this.technicalAnalysisCache.getPrices(poolKeys.baseMint.toString());
+                    let prices = this.technicalAnalysisCache.getPrices(mint);
 
-                if(prices == null){
-                    continue;
-                }
-
-                if (strategy == 1) {
-                    let currentRSI = this.TA.calculateRSIv2(prices);
-                    let macd = this.TA.calculateMACDv2(prices);
-
-                    if (previousRSI !== currentRSI) {
-                        logger.trace({ 
-                            mint: poolKeys.baseMint.toString()
-                        }, `(${timesChecked}) Waiting for buy signal: RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
-                        previousRSI = currentRSI;
+                    if (prices == null) {
+                        continue;
                     }
 
-                    if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
-                        logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
-                        return false;
-                    }
+                    if (strategy == 1) {
+                        let currentRSI = this.TA.calculateRSIv2(prices);
+                        let macd = this.TA.calculateMACDv2(prices);
+
+                        if (previousRSI !== currentRSI) {
+                            logger.trace({
+                                mint,
+                            }, `(${timesChecked}) Waiting for buy signal: RSI: ${currentRSI.toFixed(3)}, MACD: ${macd.macd}, Signal: ${macd.signal}`);
+                            previousRSI = currentRSI;
+                        }
+
+                        if (((Date.now() - startTime) > maxSignalWaitTime) && prices.length < this.config.buySignalLowVolumeThreshold) {
+                            logger.trace(`Not enough volume for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
+                            return false;
+                        }
 
                     if (((Date.now() - startTime) > maxSignalWaitTime) && currentRSI == 0 && !macd.macd) {
                         logger.trace(`Not enough data for signal after ${maxSignalWaitTime / 1000} seconds, skipping buy signal`);
@@ -148,7 +149,7 @@ export class TradeSignals {
 
                     if (previousRSI !== RSI) {
                         logger.trace({
-                            mint: poolKeys.baseMint.toString()
+                            mint
                         }, `(${timesChecked}) Waiting for buy signal: RSI: ${RSI.toFixed(3)}, RSI_EMA_11: ${RSI_EMA_11.toFixed(3)}, RSI_EMA_11 > RSI_EMA_11[-1]: ${RSI_prevEMA_11 < RSI_EMA_11}, macd>signal: ${isMacdAboveSignal}, price<ema_18: ${isEmaLAboveTokenPrice}, ema_3>ema_3[-1]: ${isEmaSAbovePrevEmaS}`);
                         previousRSI = RSI;
                     }
@@ -169,16 +170,20 @@ export class TradeSignals {
                     }
                 }
 
-            } catch (e) {
-                logger.trace({ mint: poolKeys.baseMint.toString(), e }, `Failed to check token price`);
-                continue;
-            } finally {
-                timesChecked++;
-                await sleep(interval);
-            }
-        } while ((Date.now() - startTime) < totalTimeToCheck);
+                } catch (e) {
+                    logger.trace({ mint, e }, `Failed to check token price`);
+                    continue;
+                } finally {
+                    timesChecked++;
+                    await sleep(interval);
+                }
+            } while ((Date.now() - startTime) < totalTimeToCheck);
 
-        return false;
+            return false;
+        } finally {
+            // Ensure the TA watcher is stopped regardless of outcome
+            await this.technicalAnalysisCache.markAsDone(mint);
+        }
     }
 
 

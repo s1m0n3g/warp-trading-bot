@@ -30,11 +30,18 @@ const MAX_PRICE_POINTS = 1200; // keep roughly ten minutes of data at the 500 ms
 
 export class TechnicalAnalysisCache {
   private readonly data: Map<string, TechnicalAnalysisCache_Entity> = new Map<string, TechnicalAnalysisCache_Entity>();
+  private readonly connection: Connection;
 
   constructor() {
-    setInterval(() => { 
+    // Reuse a single RPC connection for all TA watchers to avoid
+    // spawning one connection per token (which leaks memory and sockets).
+    this.connection = new Connection(RPC_ENDPOINT, {
+      commitment: COMMITMENT_LEVEL,
+    });
+
+    setInterval(() => {
       this.data.forEach((cached, key) => {
-        if(cached.done || cached.expiryTime < new Date()) {
+        if (cached.done || cached.expiryTime < new Date()) {
           logger.trace(`Technical analysis watcher for mint: ${key} expired`);
           clearInterval(cached.process);
           this.data.delete(key);
@@ -45,17 +52,13 @@ export class TechnicalAnalysisCache {
 
 
   public addNew(mint: string, poolKeys: LiquidityPoolKeysV4) {
-    let connection = new Connection(RPC_ENDPOINT, {
-      commitment: COMMITMENT_LEVEL
-    });
-
     if (this.data.has(mint)) {
       return; //already exists
     }
 
     logger.trace(`Adding new technical analysis watcher for mint: ${mint}`);
 
-    let process = this.startWatcher(connection, mint);
+    let process = this.startWatcher(mint);
     this.set(mint, new TechnicalAnalysisCache_Entity(process, poolKeys, []));
   }
 
@@ -85,7 +88,7 @@ export class TechnicalAnalysisCache {
     this.data.set(mint, entity);
   }
   
-  private startWatcher(connection: Connection, mint: string): NodeJS.Timeout {
+  private startWatcher(mint: string): NodeJS.Timeout {
     return setInterval(async () => {
       try {
 
@@ -103,7 +106,7 @@ export class TechnicalAnalysisCache {
         }
 
         let poolInfo = await Liquidity.fetchInfo({
-          connection: connection,
+          connection: this.connection,
           poolKeys: cached.poolKeys
         });
 

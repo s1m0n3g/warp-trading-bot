@@ -45,6 +45,7 @@ You should see the following output:
   - This option should not be used with public RPC.
 - `MARKET_CACHE_MAX_ENTRIES` *(optional)* - Upper bound for how many markets are retained in memory at once when caching.
   - Useful on low-memory machines; the oldest cached market is evicted whenever the limit is exceeded.
+  - When left unset, the bot auto-detects hosts with ≤1.5 GB of RAM and limits the cache to 200 entries to avoid Node.js out-of-memory crashes (set the variable explicitly to override).
   - For example, `MARKET_CACHE_MAX_ENTRIES=200` works well on 1 GB RAM hosts that also have a 2 GB swap file.
 - `CACHE_NEW_MARKETS` - Set to `true` to cache new markets.
   - This option should not be used with public RPC.

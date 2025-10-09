@@ -666,7 +666,6 @@ const runListener = async () => {
     }
 
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toBase58(), poolState);
-    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
     seenRaydiumMints.add(poolMint);
     logger.trace(
@@ -674,7 +673,7 @@ const runListener = async () => {
       'Raydium lag within threshold',
     );
 
-    await bot.buy(snapshot, evaluation.lagSeconds);
+    await bot.buy(snapshot, evaluation.lagSeconds, updatedAccountInfo.accountInfo.data);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {

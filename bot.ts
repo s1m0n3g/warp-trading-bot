@@ -163,7 +163,7 @@ export class Bot {
     return await this.whitelistCache.isInList(this.connection, poolKeys);
   }
 
-  public async buy(pool: PoolSnapshot, lag: number = 0): Promise<void> {
+  public async buy(pool: PoolSnapshot, lag: number = 0, rawState?: Buffer): Promise<void> {
     const cachedPool = await this.poolStorage.get(pool.baseMint.toBase58());
     const poolSnapshot = cachedPool ?? pool;
     const poolType = poolSnapshot.type;
@@ -239,6 +239,10 @@ export class Bot {
           logger.trace({ mint: poolMint }, `Skipping buy because buy signal not received`);
           return;
         }
+      }
+
+      if (!cachedPool) {
+        await this.poolStorage.save(poolSnapshot, rawState);
       }
 
       const startTime = Date.now();

@@ -1,9 +1,9 @@
 import { Liquidity, LiquidityPoolKeysV4 } from '@raydium-io/raydium-sdk';
-import { COMMITMENT_LEVEL, RPC_ENDPOINT, logger } from '../helpers';
+import { logger } from '../helpers';
 import { Connection } from '@solana/web3.js';
 
 export class TechnicalAnalysisCache_Entity {
-  constructor(process, poolKeys, prices) {
+  constructor(process: NodeJS.Timeout, poolKeys: LiquidityPoolKeysV4, prices: { value: number; date: Date }[]) {
     this.process = process;
     this.poolKeys = poolKeys;
     this.prices = prices;
@@ -21,8 +21,8 @@ export class TechnicalAnalysisCache_Entity {
   poolKeys: LiquidityPoolKeysV4;
   done: boolean;
   prices: {
-    value: number,
-    date: Date
+    value: number;
+    date: Date;
   }[];
 }
 
@@ -31,10 +31,10 @@ const MAX_PRICE_POINTS = 1200; // keep roughly ten minutes of data at the 500 ms
 export class TechnicalAnalysisCache {
   private readonly data: Map<string, TechnicalAnalysisCache_Entity> = new Map<string, TechnicalAnalysisCache_Entity>();
 
-  constructor() {
-    setInterval(() => { 
+  constructor(private readonly connection: Connection) {
+    setInterval(() => {
       this.data.forEach((cached, key) => {
-        if(cached.done || cached.expiryTime < new Date()) {
+        if (cached.done || cached.expiryTime < new Date()) {
           logger.trace(`Technical analysis watcher for mint: ${key} expired`);
           clearInterval(cached.process);
           this.data.delete(key);
@@ -43,19 +43,14 @@ export class TechnicalAnalysisCache {
     }, 30 * 1000);
   }
 
-
   public addNew(mint: string, poolKeys: LiquidityPoolKeysV4) {
-    let connection = new Connection(RPC_ENDPOINT, {
-      commitment: COMMITMENT_LEVEL
-    });
-
     if (this.data.has(mint)) {
       return; //already exists
     }
 
     logger.trace(`Adding new technical analysis watcher for mint: ${mint}`);
 
-    let process = this.startWatcher(connection, mint);
+    let process = this.startWatcher(mint);
     this.set(mint, new TechnicalAnalysisCache_Entity(process, poolKeys, []));
   }
 
@@ -85,7 +80,7 @@ export class TechnicalAnalysisCache {
     this.data.set(mint, entity);
   }
   
-  private startWatcher(connection: Connection, mint: string): NodeJS.Timeout {
+  private startWatcher(mint: string): NodeJS.Timeout {
     return setInterval(async () => {
       try {
 
@@ -103,8 +98,8 @@ export class TechnicalAnalysisCache {
         }
 
         let poolInfo = await Liquidity.fetchInfo({
-          connection: connection,
-          poolKeys: cached.poolKeys
+          connection: this.connection,
+          poolKeys: cached.poolKeys,
         });
 
         let tokenPriceBN = Liquidity.getRate(poolInfo);

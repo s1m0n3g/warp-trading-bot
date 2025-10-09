@@ -328,7 +328,7 @@ const runListener = async () => {
   const marketCache = new MarketCache(connection, resolvedMarketCacheMaxEntries);
   const poolCache = new PoolCache();
   await poolCache.init();
-  const technicalAnalysisCache = new TechnicalAnalysisCache();
+  const technicalAnalysisCache = new TechnicalAnalysisCache(connection);
 
   const customFee = CUSTOM_FEE;
   const requiresCustomFee = TRANSACTION_EXECUTOR === 'warp' || TRANSACTION_EXECUTOR === 'jito';
@@ -666,7 +666,6 @@ const runListener = async () => {
     }
 
     const snapshot = createRaydiumPoolSnapshot(updatedAccountInfo.accountId.toBase58(), poolState);
-    await poolCache.save(snapshot, updatedAccountInfo.accountInfo.data);
 
     seenRaydiumMints.add(poolMint);
     logger.trace(
@@ -674,7 +673,7 @@ const runListener = async () => {
       'Raydium lag within threshold',
     );
 
-    await bot.buy(snapshot, evaluation.lagSeconds);
+    await bot.buy(snapshot, evaluation.lagSeconds, updatedAccountInfo.accountInfo.data);
   });
 
   listeners.on('wallet', async (updatedAccountInfo: KeyedAccountInfo) => {

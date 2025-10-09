@@ -1,5 +1,5 @@
 import BN from 'bn.js';
-import os from 'node:os';
+import os from 'os';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';

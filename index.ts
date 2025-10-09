@@ -1,4 +1,5 @@
 import BN from 'bn.js';
+import os from 'node:os';
 import { MarketCache, PoolCache, createRaydiumPoolSnapshot } from './cache';
 import { Listeners } from './listeners';
 import { Connection, KeyedAccountInfo, Keypair } from '@solana/web3.js';
@@ -132,11 +133,34 @@ class BoundedStringSet {
 }
 
 const DEFAULT_MAX_MARKET_CACHE_ENTRIES = 5_000;
+const LOW_MEMORY_MAX_MARKET_CACHE_ENTRIES = 200;
+const LOW_MEMORY_TOTAL_MEMORY_THRESHOLD_BYTES = 1.5 * 1024 * 1024 * 1024; // ~1.5 GiB
 const DEFAULT_MAX_SEEN_RAYDIUM_MINTS = 5_000;
 const DEFAULT_MAX_SEEN_PUMPFUN_MINTS = 20_000;
 
-const resolvedMarketCacheMaxEntries =
-  MARKET_CACHE_MAX_ENTRIES === undefined ? DEFAULT_MAX_MARKET_CACHE_ENTRIES : MARKET_CACHE_MAX_ENTRIES;
+function resolveMarketCacheMaxEntries(): number {
+  if (MARKET_CACHE_MAX_ENTRIES !== undefined) {
+    return MARKET_CACHE_MAX_ENTRIES;
+  }
+
+  const totalSystemMemory = os.totalmem();
+
+  if (Number.isFinite(totalSystemMemory) && totalSystemMemory > 0 && totalSystemMemory <= LOW_MEMORY_TOTAL_MEMORY_THRESHOLD_BYTES) {
+    logger.warn(
+      {
+        totalMemoryBytes: totalSystemMemory,
+        limit: LOW_MEMORY_MAX_MARKET_CACHE_ENTRIES,
+      },
+      'Detected low-memory host. Reducing market cache capacity to avoid Node.js OOM crashes. Set MARKET_CACHE_MAX_ENTRIES to override.',
+    );
+
+    return LOW_MEMORY_MAX_MARKET_CACHE_ENTRIES;
+  }
+
+  return DEFAULT_MAX_MARKET_CACHE_ENTRIES;
+}
+
+const resolvedMarketCacheMaxEntries = resolveMarketCacheMaxEntries();
 
 const MAX_SEEN_RAYDIUM_MINTS =
   resolvedMarketCacheMaxEntries > 0
@@ -245,7 +269,10 @@ function printDetails(
   logger.info(`Max tokens at the time: ${botConfig.maxTokensAtTheTime}`);
   logger.info(`Pre load existing markets: ${PRE_LOAD_EXISTING_MARKETS}`);
   logger.info(`Cache new markets: ${CACHE_NEW_MARKETS}`);
-  logger.info(`Market cache max entries: ${MARKET_CACHE_MAX_ENTRIES ?? 'unlimited'}`);
+  const marketCacheLogValue =
+    resolvedMarketCacheMaxEntries > 0 ? resolvedMarketCacheMaxEntries : 'unlimited';
+  const marketCacheLogSuffix = MARKET_CACHE_MAX_ENTRIES === undefined ? ' (auto)' : '';
+  logger.info(`Market cache max entries: ${marketCacheLogValue}${marketCacheLogSuffix}`);
   logger.info(`Raydium mint deduplication limit: ${MAX_SEEN_RAYDIUM_MINTS}`);
   logger.info(`pump.fun mint deduplication limit: ${MAX_SEEN_PUMPFUN_MINTS}`);
   logger.info(`Log level: ${LOG_LEVEL}`);

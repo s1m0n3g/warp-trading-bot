@@ -326,6 +326,11 @@ export class Bot {
       logger.trace({ mint: rawAccount.mint.toString() }, `Processing new token...`);
 
       if (!poolData) {
+        if (this.poolStorage.wasSold(rawAccount.mint.toString())) {
+          logger.trace({ mint: rawAccount.mint.toString() }, `Skipping sell because token was already sold`);
+          return;
+        }
+
         logger.trace({ mint: rawAccount.mint.toString() }, `Token pool data is not found, can't sell`);
         return;
       }

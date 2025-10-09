@@ -94,14 +94,23 @@ interface PersistedPumpFunPoolSnapshot extends PersistedBasePoolSnapshot {
 
 const POOL_DB_FILENAME = 'pools.json';
 
+const DEFAULT_MAX_SOLD_HISTORY = 1_000;
+
 export class PoolCache {
   private readonly keys: Map<string, PoolSnapshot> = new Map<string, PoolSnapshot>();
   private readonly persisted: Map<string, PersistedPoolSnapshot> = new Map<string, PersistedPoolSnapshot>();
+  private readonly soldMints: Set<string> = new Set<string>();
+  private readonly soldMintOrder: string[] = [];
   private readonly dbPath: string;
+  private readonly maxSoldHistory: number;
   private initialized = false;
 
-  constructor(dbPath: string = path.join(__dirname, '..', 'storage', POOL_DB_FILENAME)) {
+  constructor(
+    dbPath: string = path.join(__dirname, '..', 'storage', POOL_DB_FILENAME),
+    maxSoldHistory: number = DEFAULT_MAX_SOLD_HISTORY,
+  ) {
     this.dbPath = dbPath;
+    this.maxSoldHistory = maxSoldHistory > 0 ? Math.floor(maxSoldHistory) : DEFAULT_MAX_SOLD_HISTORY;
   }
 
   public async init(): Promise<void> {
@@ -110,18 +119,33 @@ export class PoolCache {
     }
 
     const persistedSnapshots = await this.readFromDisk();
+    let shouldPersist = false;
 
     for (const persisted of persistedSnapshots) {
       const snapshot = this.deserialize(persisted);
-      if (snapshot) {
-        const mint = snapshot.baseMint.toBase58();
-        this.keys.set(mint, snapshot);
-        this.persisted.set(mint, persisted);
+      if (!snapshot) {
+        shouldPersist = true;
+        continue;
       }
+
+      const mint = snapshot.baseMint.toBase58();
+
+      if (snapshot.sold) {
+        this.rememberSoldMint(mint);
+        shouldPersist = true;
+        continue;
+      }
+
+      this.keys.set(mint, snapshot);
+      this.persisted.set(mint, persisted);
     }
 
     if (persistedSnapshots.length > 0) {
       logger.info(`Loaded ${persistedSnapshots.length} pools from local storage`);
+    }
+
+    if (shouldPersist) {
+      await this.persist();
     }
 
     this.initialized = true;
@@ -135,6 +159,7 @@ export class PoolCache {
 
     this.keys.set(mint, snapshot);
     this.persisted.set(mint, this.serialize(snapshot, rawState));
+    this.forgetSoldMint(mint);
     await this.persist();
   }
 
@@ -148,12 +173,20 @@ export class PoolCache {
 
   public async markAsSold(mint: string): Promise<void> {
     const pool = this.keys.get(mint);
+    let changed = false;
+
     if (pool) {
-      this.keys.set(mint, { ...pool, sold: true });
-      const persisted = this.persisted.get(mint);
-      if (persisted) {
-        this.persisted.set(mint, { ...persisted, sold: true });
-      }
+      this.keys.delete(mint);
+      changed = true;
+    }
+
+    if (this.persisted.delete(mint)) {
+      changed = true;
+    }
+
+    this.rememberSoldMint(mint);
+
+    if (changed) {
       await this.persist();
     }
   }
@@ -161,7 +194,12 @@ export class PoolCache {
   public async remove(mint: string): Promise<void> {
     this.keys.delete(mint);
     this.persisted.delete(mint);
+    this.rememberSoldMint(mint);
     await this.persist();
+  }
+
+  public wasSold(mint: string): boolean {
+    return this.soldMints.has(mint);
   }
 
   private serialize(snapshot: PoolSnapshot, rawState?: Buffer): PersistedPoolSnapshot {
@@ -278,5 +316,33 @@ export class PoolCache {
     const buffer = Buffer.alloc(LIQUIDITY_STATE_LAYOUT_V4.span);
     LIQUIDITY_STATE_LAYOUT_V4.encode(state, buffer);
     return buffer;
+  }
+
+  private rememberSoldMint(mint: string): void {
+    if (this.soldMints.has(mint)) {
+      return;
+    }
+
+    this.soldMints.add(mint);
+    this.soldMintOrder.push(mint);
+
+    if (this.soldMintOrder.length > this.maxSoldHistory) {
+      const oldest = this.soldMintOrder.shift();
+      if (oldest) {
+        this.soldMints.delete(oldest);
+      }
+    }
+  }
+
+  private forgetSoldMint(mint: string): void {
+    if (!this.soldMints.has(mint)) {
+      return;
+    }
+
+    this.soldMints.delete(mint);
+    const index = this.soldMintOrder.indexOf(mint);
+    if (index >= 0) {
+      this.soldMintOrder.splice(index, 1);
+    }
   }
 }
